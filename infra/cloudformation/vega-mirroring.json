@@ -23,14 +23,28 @@
       "Properties": {
         "BillingMode": "PAY_PER_REQUEST",
         "AttributeDefinitions": [
-          { "AttributeName": "pk", "AttributeType": "S" },
-          { "AttributeName": "sk", "AttributeType": "S" }
+          {
+            "AttributeName": "pk",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "sk",
+            "AttributeType": "S"
+          }
         ],
         "KeySchema": [
-          { "AttributeName": "pk", "KeyType": "HASH" },
-          { "AttributeName": "sk", "KeyType": "RANGE" }
+          {
+            "AttributeName": "pk",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "sk",
+            "KeyType": "RANGE"
+          }
         ],
-        "TableName": { "Ref": "SessionTableName" }
+        "TableName": {
+          "Ref": "SessionTableName"
+        }
       }
     },
     "SignalingRole": {
@@ -41,8 +55,14 @@
           "Statement": [
             {
               "Effect": "Allow",
-              "Principal": { "Service": ["lambda.amazonaws.com"] },
-              "Action": ["sts:AssumeRole"]
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
             }
           ]
         },
@@ -64,11 +84,18 @@
                     "dynamodb:PutItem",
                     "dynamodb:Query"
                   ],
-                  "Resource": { "Fn::GetAtt": ["SessionsTable", "Arn"] }
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "SessionsTable",
+                      "Arn"
+                    ]
+                  }
                 },
                 {
                   "Effect": "Allow",
-                  "Action": ["execute-api:ManageConnections"],
+                  "Action": [
+                    "execute-api:ManageConnections"
+                  ],
                   "Resource": {
                     "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SignalingApi}/*"
                   }
@@ -84,16 +111,195 @@
       "Properties": {
         "Runtime": "nodejs20.x",
         "Handler": "index.handler",
-        "Role": { "Fn::GetAtt": ["SignalingRole", "Arn"] },
+        "Role": {
+          "Fn::GetAtt": [
+            "SignalingRole",
+            "Arn"
+          ]
+        },
         "Timeout": 10,
         "Environment": {
           "Variables": {
-            "SESSION_TABLE_NAME": { "Ref": "SessionTableName" },
-            "STUN_SERVER_URL": { "Ref": "StunServerUrl" }
+            "SESSION_TABLE_NAME": {
+              "Ref": "SessionTableName"
+            },
+            "STUN_SERVER_URL": {
+              "Ref": "StunServerUrl"
+            }
           }
         },
         "Code": {
-          "ZipFile": "const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');\nconst { BatchWriteCommand, DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');\nconst { ApiGatewayManagementApiClient, PostToConnectionCommand } = require('@aws-sdk/client-apigatewaymanagementapi');\nconst dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}));\nconst tableName = process.env.SESSION_TABLE_NAME;\nfunction parseBody(event) { return event.body ? JSON.parse(event.body) : {}; }\nasync function listPeers(sessionId, role) { const response = await dynamo.send(new QueryCommand({ TableName: tableName, KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': `session#${sessionId}` } })); return (response.Items || []).filter((item) => item.role !== role); }\nasync function postToConnection(domainName, stage, connectionId, payload) { const client = new ApiGatewayManagementApiClient({ endpoint: `https://${domainName}/${stage}` }); await client.send(new PostToConnectionCommand({ ConnectionId: connectionId, Data: Buffer.from(JSON.stringify(payload)) })); }\nexports.handler = async (event) => { const routeKey = event.requestContext.routeKey; const connectionId = event.requestContext.connectionId; const domainName = event.requestContext.domainName; const stage = event.requestContext.stage; const requestBody = parseBody(event); let sessionId = event.queryStringParameters?.sessionId || requestBody.sessionId; let role = event.queryStringParameters?.role || requestBody.role || 'unknown'; if (routeKey === '$connect') { if (!sessionId) { return { statusCode: 400, body: 'sessionId is required' }; } await dynamo.send(new BatchWriteCommand({ RequestItems: { [tableName]: [{ PutRequest: { Item: { pk: `session#${sessionId}`, sk: `connection#${connectionId}`, connectionId, role } } }, { PutRequest: { Item: { pk: `connection#${connectionId}`, sk: 'meta', sessionId, role } } }] } })); return { statusCode: 200, body: JSON.stringify({ ok: true, stunServerUrl: process.env.STUN_SERVER_URL }) }; } if (routeKey === '$disconnect') { const connectionRecord = await dynamo.send(new GetCommand({ TableName: tableName, Key: { pk: `connection#${connectionId}`, sk: 'meta' } })); if (!connectionRecord.Item?.sessionId) { return { statusCode: 200, body: JSON.stringify({ ok: true, removed: false }) }; } sessionId = connectionRecord.Item.sessionId; await dynamo.send(new BatchWriteCommand({ RequestItems: { [tableName]: [{ DeleteRequest: { Key: { pk: `session#${sessionId}`, sk: `connection#${connectionId}` } } }, { DeleteRequest: { Key: { pk: `connection#${connectionId}`, sk: 'meta' } } }] } })); return { statusCode: 200, body: JSON.stringify({ ok: true, removed: true }) }; } if (!sessionId) { return { statusCode: 400, body: 'sessionId is required' }; } const peers = await listPeers(sessionId, role); await Promise.all(peers.map((peer) => postToConnection(domainName, stage, peer.connectionId, requestBody))); return { statusCode: 200, body: JSON.stringify({ delivered: peers.length }) }; };"
+          "Fn::Join": [
+            "\n",
+            [
+              "const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');",
+              "const {",
+              "  BatchWriteCommand,",
+              "  DynamoDBDocumentClient,",
+              "  GetCommand,",
+              "  QueryCommand,",
+              "} = require('@aws-sdk/lib-dynamodb');",
+              "const {",
+              "  ApiGatewayManagementApiClient,",
+              "  PostToConnectionCommand,",
+              "} = require('@aws-sdk/client-apigatewaymanagementapi');",
+              "",
+              "const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}));",
+              "const tableName = process.env.SESSION_TABLE_NAME;",
+              "",
+              "function parseBody(event) {",
+              "  return event.body ? JSON.parse(event.body) : {};",
+              "}",
+              "",
+              "async function listPeers(sessionId, role) {",
+              "  const response = await dynamo.send(",
+              "    new QueryCommand({",
+              "      TableName: tableName,",
+              "      KeyConditionExpression: 'pk = :pk',",
+              "      ExpressionAttributeValues: {",
+              "        ':pk': `session#${sessionId}`,",
+              "      },",
+              "    }),",
+              "  );",
+              "",
+              "  return (response.Items || []).filter((item) => item.role !== role);",
+              "}",
+              "",
+              "async function postToConnection(domainName, stage, connectionId, payload) {",
+              "  const client = new ApiGatewayManagementApiClient({",
+              "    endpoint: `https://${domainName}/${stage}`,",
+              "  });",
+              "",
+              "  await client.send(",
+              "    new PostToConnectionCommand({",
+              "      ConnectionId: connectionId,",
+              "      Data: Buffer.from(JSON.stringify(payload)),",
+              "    }),",
+              "  );",
+              "}",
+              "",
+              "exports.handler = async (event) => {",
+              "  const routeKey = event.requestContext.routeKey;",
+              "  const connectionId = event.requestContext.connectionId;",
+              "  const domainName = event.requestContext.domainName;",
+              "  const stage = event.requestContext.stage;",
+              "  const requestBody = parseBody(event);",
+              "  let sessionId = event.queryStringParameters?.sessionId || requestBody.sessionId;",
+              "  const role = event.queryStringParameters?.role || requestBody.role || 'unknown';",
+              "",
+              "  if (routeKey === '$connect') {",
+              "    if (!sessionId) {",
+              "      return { statusCode: 400, body: 'sessionId is required' };",
+              "    }",
+              "",
+              "    await dynamo.send(",
+              "      new BatchWriteCommand({",
+              "        RequestItems: {",
+              "          [tableName]: [",
+              "            {",
+              "              PutRequest: {",
+              "                Item: {",
+              "                  pk: `session#${sessionId}`,",
+              "                  sk: `connection#${connectionId}`,",
+              "                  connectionId,",
+              "                  role,",
+              "                },",
+              "              },",
+              "            },",
+              "            {",
+              "              PutRequest: {",
+              "                Item: {",
+              "                  pk: `connection#${connectionId}`,",
+              "                  sk: 'meta',",
+              "                  sessionId,",
+              "                  role,",
+              "                },",
+              "              },",
+              "            },",
+              "          ],",
+              "        },",
+              "      }),",
+              "    );",
+              "",
+              "    return {",
+              "      statusCode: 200,",
+              "      body: JSON.stringify({",
+              "        ok: true,",
+              "        stunServerUrl: process.env.STUN_SERVER_URL,",
+              "      }),",
+              "    };",
+              "  }",
+              "",
+              "  if (routeKey === '$disconnect') {",
+              "    const connectionRecord = await dynamo.send(",
+              "      new GetCommand({",
+              "        TableName: tableName,",
+              "        Key: {",
+              "          pk: `connection#${connectionId}`,",
+              "          sk: 'meta',",
+              "        },",
+              "      }),",
+              "    );",
+              "",
+              "    if (!connectionRecord.Item?.sessionId) {",
+              "      return {",
+              "        statusCode: 200,",
+              "        body: JSON.stringify({ ok: true, removed: false }),",
+              "      };",
+              "    }",
+              "",
+              "    sessionId = connectionRecord.Item.sessionId;",
+              "",
+              "    await dynamo.send(",
+              "      new BatchWriteCommand({",
+              "        RequestItems: {",
+              "          [tableName]: [",
+              "            {",
+              "              DeleteRequest: {",
+              "                Key: {",
+              "                  pk: `session#${sessionId}`,",
+              "                  sk: `connection#${connectionId}`,",
+              "                },",
+              "              },",
+              "            },",
+              "            {",
+              "              DeleteRequest: {",
+              "                Key: {",
+              "                  pk: `connection#${connectionId}`,",
+              "                  sk: 'meta',",
+              "                },",
+              "              },",
+              "            },",
+              "          ],",
+              "        },",
+              "      }),",
+              "    );",
+              "",
+              "    return {",
+              "      statusCode: 200,",
+              "      body: JSON.stringify({ ok: true, removed: true }),",
+              "    };",
+              "  }",
+              "",
+              "  if (!sessionId) {",
+              "    return { statusCode: 400, body: 'sessionId is required' };",
+              "  }",
+              "",
+              "  const peers = await listPeers(sessionId, role);",
+              "",
+              "  await Promise.all(",
+              "    peers.map((peer) =>",
+              "      postToConnection(domainName, stage, peer.connectionId, requestBody),",
+              "    ),",
+              "  );",
+              "",
+              "  return {",
+              "    statusCode: 200,",
+              "    body: JSON.stringify({ delivered: peers.length }),",
+              "  };",
+              "};"
+            ]
+          ]
         }
       }
     },
@@ -108,7 +314,9 @@
     "SignalingIntegration": {
       "Type": "AWS::ApiGatewayV2::Integration",
       "Properties": {
-        "ApiId": { "Ref": "SignalingApi" },
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
         "IntegrationType": "AWS_PROXY",
         "IntegrationUri": {
           "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SignalingFunction.Arn}/invocations"
@@ -118,49 +326,121 @@
     "ConnectRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
-        "ApiId": { "Ref": "SignalingApi" },
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
         "RouteKey": "$connect",
-        "Target": { "Fn::Join": ["/", ["integrations", { "Ref": "SignalingIntegration" }]] }
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
       }
     },
     "DisconnectRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
-        "ApiId": { "Ref": "SignalingApi" },
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
         "RouteKey": "$disconnect",
-        "Target": { "Fn::Join": ["/", ["integrations", { "Ref": "SignalingIntegration" }]] }
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
       }
     },
     "DefaultRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
-        "ApiId": { "Ref": "SignalingApi" },
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
         "RouteKey": "$default",
-        "Target": { "Fn::Join": ["/", ["integrations", { "Ref": "SignalingIntegration" }]] }
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
       }
     },
     "SignalOfferRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
-        "ApiId": { "Ref": "SignalingApi" },
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
         "RouteKey": "offer",
-        "Target": { "Fn::Join": ["/", ["integrations", { "Ref": "SignalingIntegration" }]] }
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
       }
     },
     "SignalAnswerRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
-        "ApiId": { "Ref": "SignalingApi" },
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
         "RouteKey": "answer",
-        "Target": { "Fn::Join": ["/", ["integrations", { "Ref": "SignalingIntegration" }]] }
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
       }
     },
     "SignalIceRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
-        "ApiId": { "Ref": "SignalingApi" },
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
         "RouteKey": "ice",
-        "Target": { "Fn::Join": ["/", ["integrations", { "Ref": "SignalingIntegration" }]] }
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
       }
     },
     "Deployment": {
@@ -174,23 +454,33 @@
         "SignalIceRoute"
       ],
       "Properties": {
-        "ApiId": { "Ref": "SignalingApi" }
+        "ApiId": {
+          "Ref": "SignalingApi"
+        }
       }
     },
     "Stage": {
       "Type": "AWS::ApiGatewayV2::Stage",
       "Properties": {
-        "ApiId": { "Ref": "SignalingApi" },
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
         "AutoDeploy": false,
-        "DeploymentId": { "Ref": "Deployment" },
-        "StageName": { "Ref": "StageName" }
+        "DeploymentId": {
+          "Ref": "Deployment"
+        },
+        "StageName": {
+          "Ref": "StageName"
+        }
       }
     },
     "SignalingPermission": {
       "Type": "AWS::Lambda::Permission",
       "Properties": {
         "Action": "lambda:InvokeFunction",
-        "FunctionName": { "Ref": "SignalingFunction" },
+        "FunctionName": {
+          "Ref": "SignalingFunction"
+        },
         "Principal": "apigateway.amazonaws.com",
         "SourceArn": {
           "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SignalingApi}/${StageName}/*"
@@ -205,10 +495,14 @@
       }
     },
     "SessionsTableName": {
-      "Value": { "Ref": "SessionTableName" }
+      "Value": {
+        "Ref": "SessionTableName"
+      }
     },
     "ConfiguredStunServerUrl": {
-      "Value": { "Ref": "StunServerUrl" }
+      "Value": {
+        "Ref": "StunServerUrl"
+      }
     }
   }
 }

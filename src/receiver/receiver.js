@@ -30,6 +30,13 @@ export class ScreenMirrorReceiver {
       return null;
     }
 
+    if (
+      this.signalingSocket &&
+      this.signalingSocket.readyState !== WebSocket.CLOSED
+    ) {
+      return this.signalingSocket;
+    }
+
     const signalingUrl = new URL(this.runtimeConfig.signalingEndpoint);
     signalingUrl.searchParams.set("sessionId", this.runtimeConfig.sessionId);
     signalingUrl.searchParams.set("role", "receiver");
@@ -92,6 +99,16 @@ export class ScreenMirrorReceiver {
   }
 
   async addIceCandidate(candidate) {
+    if (candidate == null || candidate.candidate === "") {
+      if (!this.peerConnection.remoteDescription) {
+        this.pendingRemoteCandidates.push(null);
+        return;
+      }
+
+      await this.peerConnection.addIceCandidate(null);
+      return;
+    }
+
     if (!this.peerConnection.remoteDescription) {
       this.pendingRemoteCandidates.push(candidate);
       this.pendingRemoteCandidates = prioritizeIceCandidates(
@@ -112,5 +129,15 @@ export class ScreenMirrorReceiver {
     for (const candidate of prioritizedCandidates) {
       await this.peerConnection.addIceCandidate(candidate);
     }
+  }
+
+  dispose() {
+    if (this.signalingSocket) {
+      this.signalingSocket.close();
+      this.signalingSocket = null;
+    }
+
+    this.peerConnection.close();
+    this.videoElement.srcObject = null;
   }
 }

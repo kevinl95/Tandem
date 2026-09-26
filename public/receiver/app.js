@@ -18,6 +18,7 @@ function buildReceiver() {
   });
 
   if (!currentReceiver || currentReceiverKey !== receiverKey) {
+    currentReceiver?.dispose();
     currentReceiverKey = receiverKey;
     currentReceiver = new ScreenMirrorReceiver(videoElement, {
       sessionId: sessionIdInput.value,

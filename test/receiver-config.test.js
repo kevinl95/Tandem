@@ -24,6 +24,16 @@ test("receiver config includes optional STUN when provided", () => {
   ]);
 });
 
+test("receiver config trims optional STUN input before using it", () => {
+  const config = createReceiverRuntimeConfig({
+    stunServerUrl: "  stun:aws.example.internal:3478  ",
+  });
+
+  assert.deepEqual(config.peerConfiguration.iceServers, [
+    { urls: "stun:aws.example.internal:3478" },
+  ]);
+});
+
 test("host candidates are prioritized ahead of broader-compatibility candidates", () => {
   const relayCandidate = {
     candidate:
