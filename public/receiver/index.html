@@ -3,111 +3,107 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tandem Vega Receiver</title>
+    <title>Tandem Receiver</title>
     <style>
+      html,
       body {
-        background: #111827;
+        background: #0b1120;
         color: #f9fafb;
         font-family: Arial, sans-serif;
+        height: 100%;
         margin: 0;
-        padding: 24px;
-      }
-
-      main {
-        display: grid;
-        gap: 16px;
-        margin: 0 auto;
-        max-width: 960px;
-      }
-
-      textarea,
-      input,
-      button {
-        border-radius: 8px;
-        border: 1px solid #374151;
-        box-sizing: border-box;
-        font: inherit;
-        padding: 12px;
-        width: 100%;
-      }
-
-      button {
-        background: #2563eb;
-        color: white;
-        cursor: pointer;
-        width: auto;
+        overflow: hidden;
       }
 
       video {
         background: black;
-        border-radius: 12px;
-        min-height: 320px;
+        height: 100%;
+        inset: 0;
+        object-fit: contain;
+        position: fixed;
+        visibility: hidden;
         width: 100%;
       }
 
-      .row {
-        display: grid;
-        gap: 12px;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      body.streaming video {
+        visibility: visible;
+      }
+
+      body.streaming #pairing {
+        display: none;
+      }
+
+      #pairing {
+        align-items: center;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        justify-content: center;
+        padding: 48px;
+        text-align: center;
+      }
+
+      h1 {
+        font-size: 40px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        margin: 0 0 48px;
+        opacity: 0.8;
+      }
+
+      #instructions {
+        font-size: 32px;
+        margin: 0 0 24px;
+      }
+
+      #session-code {
+        font-family: "Courier New", monospace;
+        font-size: 128px;
+        font-weight: 700;
+        letter-spacing: 0.2em;
+        margin: 0 0 48px;
+      }
+
+      #receiver-status {
+        color: #9ca3af;
+        font-size: 28px;
+        margin: 0;
+      }
+
+      #receiver-status.problem {
+        color: #fca5a5;
+      }
+
+      #probe-link {
+        bottom: 32px;
+        color: #93c5fd;
+        font-size: 22px;
+        position: fixed;
+        right: 48px;
+      }
+
+      #probe-link:focus {
+        outline: 3px solid #93c5fd;
+        outline-offset: 4px;
+      }
+
+      body.streaming #probe-link {
+        display: none;
       }
     </style>
   </head>
   <body>
-    <main>
-      <section>
-        <h1>Tandem Vega Receiver</h1>
-        <p>
-          Direct WebRTC screen mirroring receiver with preferred host ICE and optional AWS signaling.
-        </p>
-      </section>
+    <video id="receiver-video" aria-label="Mirrored screen" autoplay playsinline></video>
 
-      <section class="row">
-        <label>
-          Session ID
-          <input id="session-id" placeholder="living-room" />
-        </label>
-        <label>
-          Optional STUN URL
-          <input id="stun-url" placeholder="stun:stun.example.internal:3478" />
-        </label>
-        <label>
-          Optional signaling endpoint
-          <input id="signaling-endpoint" placeholder="wss://example.execute-api.region.amazonaws.com/prod" />
-        </label>
-      </section>
-
-      <section>
-        <button id="connect-signaling">Connect signaling</button>
-        <span id="signal-status" role="status" aria-live="polite">Not connected</span>
-      </section>
-
-      <section>
-        <p id="receiver-status" role="alert" aria-live="assertive">Ready to receive a screen share.</p>
-      </section>
-
-      <section>
-        <label>
-          Manual offer JSON
-          <textarea id="offer-input" rows="8" placeholder='{"type":"offer","sdp":"..."}'></textarea>
-        </label>
-        <button id="accept-offer">Accept offer</button>
-      </section>
-
-      <section>
-        <label>
-          Receiver answer JSON
-          <textarea id="answer-output" rows="8" readonly></textarea>
-        </label>
-      </section>
-
-      <section>
-        <video id="receiver-video" aria-label="Mirrored screen output" autoplay playsinline></video>
-      </section>
-
-      <section>
-        <a id="probe-link" href="../probe/">Run WebRTC diagnostics</a>
-      </section>
+    <main id="pairing">
+      <h1>TANDEM</h1>
+      <p id="instructions">To share your screen, open the Tandem sender and enter</p>
+      <p id="session-code" aria-label="Pairing code">······</p>
+      <p id="receiver-status" role="status" aria-live="polite">Starting…</p>
     </main>
+
+    <a id="probe-link" href="../probe/">Run WebRTC diagnostics</a>
 
     <script type="module" src="./app.js"></script>
   </body>

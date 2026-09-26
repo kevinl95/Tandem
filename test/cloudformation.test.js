@@ -2,54 +2,62 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { lambdaSourcePath, templatePath } from "../scripts/sync-lambda.mjs";
 
-const templatePath = new URL(
-  "../infra/cloudformation/vega-mirroring.json",
-  import.meta.url,
-);
 const template = JSON.parse(readFileSync(templatePath, "utf8"));
-
-test("cloudformation template keeps STUN optional", () => {
-  assert.equal(template.Parameters.StunServerUrl.Default, "");
-});
+const inlineLambda = template.Resources.SignalingFunction.Properties.Code.ZipFile;
 
 test("cloudformation template provisions signaling coordination resources", () => {
+  assert.equal(template.Resources.SignalingApi.Type, "AWS::ApiGatewayV2::Api");
+  assert.equal(template.Resources.SignalingFunction.Type, "AWS::Lambda::Function");
+  assert.equal(template.Resources.SessionsTable.Type, "AWS::DynamoDB::Table");
+});
+
+test("cloudformation inline Lambda matches infra/lambda/signaling.py", () => {
   assert.equal(
-    template.Resources.SignalingApi.Type,
-    "AWS::ApiGatewayV2::Api",
-  );
-  assert.equal(
-    template.Resources.SignalingFunction.Type,
-    "AWS::Lambda::Function",
-  );
-  assert.equal(
-    template.Resources.SessionsTable.Type,
-    "AWS::DynamoDB::Table",
-  );
-  assert.ok(
-    template.Resources.SignalingFunction.Properties.Code.ZipFile,
-    "expected inline Lambda code to be wrapped in Code.ZipFile",
+    inlineLambda,
+    readFileSync(lambdaSourcePath, "utf8"),
+    "run `npm run sync:lambda` after editing infra/lambda/signaling.py",
   );
 });
 
-test("cloudformation template exports websocket endpoint", () => {
-  assert.match(
-    template.Outputs.SignalingWebSocketUrl.Value["Fn::Sub"],
-    /^wss:\/\//,
-  );
-});
-
-test("cloudformation template inline handler compiles as valid Python", () => {
-  const [separator, lines] =
-    template.Resources.SignalingFunction.Properties.Code.ZipFile["Fn::Join"];
-  const source = lines.join(separator);
+test("cloudformation inline handler compiles as valid Python", () => {
   const result = spawnSync(
-    "python",
+    "python3",
     ["-c", "import sys; compile(sys.stdin.read(), '<inline>', 'exec')"],
-    { input: source, encoding: "utf8" },
+    { input: inlineLambda, encoding: "utf8" },
   );
 
   assert.equal(result.status, 0, result.stderr);
+});
+
+test("signaling Lambda unit tests pass", () => {
+  const result = spawnSync("python3", ["-m", "unittest", "-q"], {
+    cwd: fileURLToPath(new URL("../infra/lambda", import.meta.url)),
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("cloudformation template expires stale connection records", () => {
+  assert.deepEqual(template.Resources.SessionsTable.Properties.TimeToLiveSpecification, {
+    AttributeName: "expiresAt",
+    Enabled: true,
+  });
+});
+
+test("cloudformation stage auto-deploys route changes and is throttled", () => {
+  const stage = template.Resources.Stage.Properties;
+
+  assert.equal(stage.AutoDeploy, true);
+  assert.ok(stage.DefaultRouteSettings.ThrottlingRateLimit);
+  assert.ok(stage.DefaultRouteSettings.ThrottlingBurstLimit);
+});
+
+test("cloudformation template exports websocket endpoint", () => {
+  assert.match(template.Outputs.SignalingWebSocketUrl.Value["Fn::Sub"], /^wss:\/\//);
 });
 
 test("cloudformation template scopes API Gateway invoke permission to the signaling API stage", () => {

@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Optional AWS signaling infrastructure for Tandem Vega screen mirroring.",
+  "Description": "Tandem signaling: relays WebRTC offers, answers and ICE candidates between a Vega receiver and a sender. Media stays on the local network.",
   "Parameters": {
     "StageName": {
       "Type": "String",
@@ -11,10 +11,15 @@
       "Type": "String",
       "Default": "tandem-vega-sessions"
     },
-    "StunServerUrl": {
-      "Type": "String",
-      "Default": "",
-      "Description": "Optional STUN server URL to distribute to devices for broader connectivity."
+    "ThrottlingRateLimit": {
+      "Type": "Number",
+      "Default": 500,
+      "Description": "Steady-state messages per second across all clients."
+    },
+    "ThrottlingBurstLimit": {
+      "Type": "Number",
+      "Default": 1000,
+      "Description": "Burst messages across all clients."
     }
   },
   "Resources": {
@@ -44,6 +49,10 @@
         ],
         "TableName": {
           "Ref": "SessionTableName"
+        },
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAt",
+          "Enabled": true
         }
       }
     },
@@ -78,7 +87,6 @@
                 {
                   "Effect": "Allow",
                   "Action": [
-                    "dynamodb:BatchWriteItem",
                     "dynamodb:DeleteItem",
                     "dynamodb:GetItem",
                     "dynamodb:PutItem",
@@ -122,181 +130,11 @@
           "Variables": {
             "SESSION_TABLE_NAME": {
               "Ref": "SessionTableName"
-            },
-            "STUN_SERVER_URL": {
-              "Ref": "StunServerUrl"
             }
           }
         },
         "Code": {
-          "ZipFile": {
-            "Fn::Join": [
-              "\n",
-              [
-                "import json",
-                "import logging",
-                "import os",
-                "",
-                "import boto3",
-                "from boto3.dynamodb.conditions import Key",
-                "from botocore.exceptions import ClientError",
-                "",
-                "LOGGER = logging.getLogger()",
-                "LOGGER.setLevel(logging.INFO)",
-                "",
-                "TABLE_NAME = os.environ['SESSION_TABLE_NAME']",
-                "TABLE = boto3.resource('dynamodb').Table(TABLE_NAME)",
-                "MANAGEMENT_CLIENTS = {}",
-                "",
-                "",
-                "def parse_body(event):",
-                "    return json.loads(event['body']) if event.get('body') else {}",
-                "",
-                "",
-                "def get_management_client(domain_name, stage):",
-                "    endpoint_url = f'https://{domain_name}/{stage}'",
-                "",
-                "    if endpoint_url not in MANAGEMENT_CLIENTS:",
-                "        MANAGEMENT_CLIENTS[endpoint_url] = boto3.client(",
-                "            'apigatewaymanagementapi',",
-                "            endpoint_url=endpoint_url,",
-                "        )",
-                "",
-                "    return MANAGEMENT_CLIENTS[endpoint_url]",
-                "",
-                "",
-                "def remove_connection(session_id, connection_id):",
-                "    with TABLE.batch_writer() as batch:",
-                "        batch.delete_item(",
-                "            Key={",
-                "                'pk': f'session#{session_id}',",
-                "                'sk': f'connection#{connection_id}',",
-                "            },",
-                "        )",
-                "        batch.delete_item(",
-                "            Key={",
-                "                'pk': f'connection#{connection_id}',",
-                "                'sk': 'meta',",
-                "            },",
-                "        )",
-                "",
-                "",
-                "def list_peers(session_id, role):",
-                "    response = TABLE.query(",
-                "        KeyConditionExpression=Key('pk').eq(f'session#{session_id}'),",
-                "    )",
-                "",
-                "    return [item for item in response.get('Items', []) if item.get('role') != role]",
-                "",
-                "",
-                "def post_to_connection(domain_name, stage, session_id, connection_id, payload):",
-                "    client = get_management_client(domain_name, stage)",
-                "",
-                "    try:",
-                "        client.post_to_connection(",
-                "            ConnectionId=connection_id,",
-                "            Data=json.dumps(payload).encode('utf-8'),",
-                "        )",
-                "        return True",
-                "    except client.exceptions.GoneException:",
-                "        remove_connection(session_id, connection_id)",
-                "        return False",
-                "    except ClientError as error:",
-                "        if error.response.get('Error', {}).get('Code') == 'GoneException':",
-                "            remove_connection(session_id, connection_id)",
-                "            return False",
-                "",
-                "        LOGGER.exception('PostToConnection failed', extra={'connectionId': connection_id})",
-                "        return False",
-                "",
-                "",
-                "def handler(event, _context):",
-                "    route_key = event['requestContext']['routeKey']",
-                "    connection_id = event['requestContext']['connectionId']",
-                "    domain_name = event['requestContext']['domainName']",
-                "    stage = event['requestContext']['stage']",
-                "    request_body = parse_body(event)",
-                "    session_id = (event.get('queryStringParameters') or {}).get('sessionId') or request_body.get('sessionId')",
-                "    role = (event.get('queryStringParameters') or {}).get('role') or request_body.get('role') or 'unknown'",
-                "",
-                "    if route_key == '$connect':",
-                "        if not session_id:",
-                "            return {'statusCode': 400, 'body': 'sessionId is required'}",
-                "",
-                "        with TABLE.batch_writer() as batch:",
-                "            batch.put_item(",
-                "                Item={",
-                "                    'pk': f'session#{session_id}',",
-                "                    'sk': f'connection#{connection_id}',",
-                "                    'connectionId': connection_id,",
-                "                    'role': role,",
-                "                },",
-                "            )",
-                "            batch.put_item(",
-                "                Item={",
-                "                    'pk': f'connection#{connection_id}',",
-                "                    'sk': 'meta',",
-                "                    'sessionId': session_id,",
-                "                    'role': role,",
-                "                },",
-                "            )",
-                "",
-                "        return {",
-                "            'statusCode': 200,",
-                "            'body': json.dumps({",
-                "                'ok': True,",
-                "                'stunServerUrl': os.environ.get('STUN_SERVER_URL', ''),",
-                "            }),",
-                "        }",
-                "",
-                "    if route_key == '$disconnect':",
-                "        connection_record = TABLE.get_item(",
-                "            Key={",
-                "                'pk': f'connection#{connection_id}',",
-                "                'sk': 'meta',",
-                "            },",
-                "        )",
-                "",
-                "        if 'Item' not in connection_record or 'sessionId' not in connection_record['Item']:",
-                "            return {",
-                "                'statusCode': 200,",
-                "                'body': json.dumps({'ok': True, 'removed': False}),",
-                "            }",
-                "",
-                "        session_id = connection_record['Item']['sessionId']",
-                "        remove_connection(session_id, connection_id)",
-                "",
-                "        return {",
-                "            'statusCode': 200,",
-                "            'body': json.dumps({'ok': True, 'removed': True}),",
-                "        }",
-                "",
-                "    if not session_id:",
-                "        return {'statusCode': 400, 'body': 'sessionId is required'}",
-                "",
-                "    peers = list_peers(session_id, role)",
-                "    delivery_results = [",
-                "        post_to_connection(",
-                "            domain_name,",
-                "            stage,",
-                "            session_id,",
-                "            peer['connectionId'],",
-                "            request_body,",
-                "        )",
-                "        for peer in peers",
-                "    ]",
-                "",
-                "    return {",
-                "        'statusCode': 200,",
-                "        'body': json.dumps({",
-                "            'delivered': len([result for result in delivery_results if result]),",
-                "            'requested': len(peers),",
-                "        }),",
-                "    }",
-                ""
-              ]
-            ]
-          }
+          "ZipFile": "\"\"\"WebSocket signaling for Tandem.\n\nRelays offers, answers and ICE candidates between the receiver (TV) and the\nsender in a session. Media never passes through AWS.\n\nThis file is the source of truth for the inline Lambda code in\ninfra/cloudformation/vega-mirroring.json; run `npm run sync:lambda` after\nediting it.\n\"\"\"\nimport json\nimport logging\nimport os\nimport re\nimport time\n\nLOGGER = logging.getLogger()\nLOGGER.setLevel(logging.INFO)\n\n# API Gateway closes WebSocket connections after 2 hours, so anything older\n# than this is stale even if $disconnect never ran.\nCONNECTION_TTL_SECONDS = 3 * 60 * 60\nSESSION_ID_PATTERN = re.compile(r'^[A-Z0-9]{4,16}$')\nALLOWED_MESSAGES = {\n    'receiver': {'answer', 'ice', 'ping'},\n    'sender': {'offer', 'ice', 'ping'},\n}\n\n_table = None\n_management_clients = {}\n\n\ndef get_table():\n    global _table\n    if _table is None:\n        import boto3\n\n        _table = boto3.resource('dynamodb').Table(os.environ['SESSION_TABLE_NAME'])\n    return _table\n\n\ndef get_management_client(domain_name, stage):\n    endpoint_url = f'https://{domain_name}/{stage}'\n    if endpoint_url not in _management_clients:\n        import boto3\n\n        _management_clients[endpoint_url] = boto3.client(\n            'apigatewaymanagementapi',\n            endpoint_url=endpoint_url,\n        )\n    return _management_clients[endpoint_url]\n\n\ndef response(status_code, body=''):\n    return {'statusCode': status_code, 'body': body}\n\n\ndef get_connection(connection_id):\n    item = get_table().get_item(\n        Key={'pk': f'connection#{connection_id}', 'sk': 'meta'},\n    ).get('Item')\n    return item if item and int(item.get('expiresAt', 0)) > time.time() else None\n\n\ndef remove_connection(session_id, connection_id):\n    table = get_table()\n    table.delete_item(Key={'pk': f'session#{session_id}', 'sk': f'connection#{connection_id}'})\n    table.delete_item(Key={'pk': f'connection#{connection_id}', 'sk': 'meta'})\n\n\ndef list_peers(session_id, connection_id, role):\n    items = get_table().query(\n        KeyConditionExpression='pk = :pk',\n        ExpressionAttributeValues={':pk': f'session#{session_id}'},\n    ).get('Items', [])\n    now = time.time()\n    return [\n        item\n        for item in items\n        if item.get('connectionId') != connection_id\n        and item.get('role') != role\n        and int(item.get('expiresAt', 0)) > now\n    ]\n\n\ndef post_to_connection(request_context, session_id, connection_id, payload):\n    client = get_management_client(request_context['domainName'], request_context['stage'])\n    try:\n        client.post_to_connection(\n            ConnectionId=connection_id,\n            Data=json.dumps(payload).encode('utf-8'),\n        )\n        return True\n    except Exception as error:  # boto3 raises GoneException as a ClientError subclass\n        code = getattr(error, 'response', {}).get('Error', {}).get('Code')\n        if code == 'GoneException':\n            remove_connection(session_id, connection_id)\n        else:\n            LOGGER.exception('PostToConnection failed for %s', connection_id)\n        return False\n\n\ndef on_connect(event, connection_id):\n    params = event.get('queryStringParameters') or {}\n    session_id = (params.get('sessionId') or '').strip().upper()\n    role = params.get('role')\n\n    if not SESSION_ID_PATTERN.match(session_id) or role not in ALLOWED_MESSAGES:\n        return response(400, 'a valid sessionId and role (receiver or sender) are required')\n\n    expires_at = int(time.time()) + CONNECTION_TTL_SECONDS\n    source_ip = event['requestContext'].get('identity', {}).get('sourceIp', '')\n    table = get_table()\n    table.put_item(Item={\n        'pk': f'session#{session_id}',\n        'sk': f'connection#{connection_id}',\n        'connectionId': connection_id,\n        'role': role,\n        'expiresAt': expires_at,\n    })\n    table.put_item(Item={\n        'pk': f'connection#{connection_id}',\n        'sk': 'meta',\n        'sessionId': session_id,\n        'role': role,\n        'sourceIp': source_ip,\n        'expiresAt': expires_at,\n    })\n    return response(200)\n\n\ndef on_disconnect(event, connection_id):\n    connection = get_connection(connection_id)\n    if not connection:\n        return response(200)\n\n    session_id = connection['sessionId']\n    remove_connection(session_id, connection_id)\n    for peer in list_peers(session_id, connection_id, connection['role']):\n        post_to_connection(\n            event['requestContext'],\n            session_id,\n            peer['connectionId'],\n            {'type': 'peer-left', 'from': connection['role']},\n        )\n    return response(200)\n\n\ndef on_message(event, connection_id):\n    connection = get_connection(connection_id)\n    if not connection:\n        return response(403, 'unknown connection')\n\n    try:\n        message = json.loads(event.get('body') or '{}')\n    except json.JSONDecodeError:\n        return response(400, 'message must be JSON')\n\n    role = connection['role']\n    message_type = message.get('type') if isinstance(message, dict) else None\n    if message_type not in ALLOWED_MESSAGES[role]:\n        return response(400, f'{role} cannot send {message_type!r}')\n    if message_type == 'ping':\n        return response(200)\n\n    session_id = connection['sessionId']\n    request_context = event['requestContext']\n    # Session and role come from the connection record, never from the message.\n    payload = {**message, 'sessionId': session_id, 'from': role}\n    payload.pop('role', None)\n\n    peers = list_peers(session_id, connection_id, role)\n    delivered = sum(\n        post_to_connection(request_context, session_id, peer['connectionId'], payload)\n        for peer in peers\n    )\n    if delivered == 0 and message_type in ('offer', 'answer'):\n        post_to_connection(\n            request_context,\n            session_id,\n            connection_id,\n            {'type': 'error', 'reason': 'no-peer', 'sessionId': session_id},\n        )\n    return response(200)\n\n\ndef handler(event, _context):\n    route_key = event['requestContext']['routeKey']\n    connection_id = event['requestContext']['connectionId']\n\n    if route_key == '$connect':\n        return on_connect(event, connection_id)\n    if route_key == '$disconnect':\n        return on_disconnect(event, connection_id)\n    return on_message(event, connection_id)\n"
         }
       }
     },
@@ -380,96 +218,30 @@
         }
       }
     },
-    "SignalOfferRoute": {
-      "Type": "AWS::ApiGatewayV2::Route",
-      "Properties": {
-        "ApiId": {
-          "Ref": "SignalingApi"
-        },
-        "RouteKey": "offer",
-        "Target": {
-          "Fn::Join": [
-            "/",
-            [
-              "integrations",
-              {
-                "Ref": "SignalingIntegration"
-              }
-            ]
-          ]
-        }
-      }
-    },
-    "SignalAnswerRoute": {
-      "Type": "AWS::ApiGatewayV2::Route",
-      "Properties": {
-        "ApiId": {
-          "Ref": "SignalingApi"
-        },
-        "RouteKey": "answer",
-        "Target": {
-          "Fn::Join": [
-            "/",
-            [
-              "integrations",
-              {
-                "Ref": "SignalingIntegration"
-              }
-            ]
-          ]
-        }
-      }
-    },
-    "SignalIceRoute": {
-      "Type": "AWS::ApiGatewayV2::Route",
-      "Properties": {
-        "ApiId": {
-          "Ref": "SignalingApi"
-        },
-        "RouteKey": "ice",
-        "Target": {
-          "Fn::Join": [
-            "/",
-            [
-              "integrations",
-              {
-                "Ref": "SignalingIntegration"
-              }
-            ]
-          ]
-        }
-      }
-    },
-    "Deployment": {
-      "Type": "AWS::ApiGatewayV2::Deployment",
-      "DependsOn": [
-        "ConnectRoute",
-        "DisconnectRoute",
-        "DefaultRoute",
-        "SignalOfferRoute",
-        "SignalAnswerRoute",
-        "SignalIceRoute"
-      ],
-      "Properties": {
-        "ApiId": {
-          "Ref": "SignalingApi"
-        }
-      }
-    },
     "Stage": {
       "Type": "AWS::ApiGatewayV2::Stage",
       "Properties": {
         "ApiId": {
           "Ref": "SignalingApi"
         },
-        "AutoDeploy": false,
-        "DeploymentId": {
-          "Ref": "Deployment"
-        },
+        "AutoDeploy": true,
         "StageName": {
           "Ref": "StageName"
+        },
+        "DefaultRouteSettings": {
+          "ThrottlingBurstLimit": {
+            "Ref": "ThrottlingBurstLimit"
+          },
+          "ThrottlingRateLimit": {
+            "Ref": "ThrottlingRateLimit"
+          }
         }
-      }
+      },
+      "DependsOn": [
+        "ConnectRoute",
+        "DisconnectRoute",
+        "DefaultRoute"
+      ]
     },
     "SignalingPermission": {
       "Type": "AWS::Lambda::Permission",
@@ -494,11 +266,6 @@
     "SessionsTableName": {
       "Value": {
         "Ref": "SessionTableName"
-      }
-    },
-    "ConfiguredStunServerUrl": {
-      "Value": {
-        "Ref": "StunServerUrl"
       }
     }
   }

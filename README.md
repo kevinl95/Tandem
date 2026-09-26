@@ -1,40 +1,60 @@
 # Tandem
 
-Tandem is a minimal starter for an Amazon Vega / Fire TV screen-mirroring receiver that keeps media on the local network:
+Tandem mirrors a screen to an Amazon Vega Fire TV over the local network:
 
-- **Phone → WebRTC → Vega receiver**
-- **Host ICE candidates are preferred** for the primary direct path
-- **Optional STUN** can be injected for broader network compatibility
-- **Optional AWS signaling** is provided for device discovery and session establishment
-- **AWS infrastructure is deployable with CloudFormation**
+- **Sender → WebRTC → Vega receiver**, with media flowing directly over the LAN
+- **AWS signaling** (API Gateway WebSocket, Lambda, DynamoDB) only relays offers, answers and ICE candidates
+- **Pairing by code**: the TV shows a six-character code that the sender enters
 
 ## Repository layout
 
-- `/public/receiver` – static Vega receiver UI
-- `/src/receiver` – WebRTC receiver runtime modules
-- `/infra/cloudformation` – deployable AWS signaling stack
-- `/test` – focused validation for the receiver configuration and infra template
+- `/public/receiver` – TV receiver page (pairing code, full-screen video)
+- `/public/sender` – desktop browser sender page
+- `/public/probe` – WebRTC capability probe
+- `/src/receiver`, `/src/sender` – WebRTC and signaling logic
+- `/infra/lambda/signaling.py` – signaling Lambda (source of truth, with unit tests)
+- `/infra/cloudformation` – deployable signaling stack (Lambda code inlined by `npm run sync:lambda`)
+- `/vega-app` – Vega WebView app that hosts the receiver page
+- `/test` – Node tests, which also run the Lambda's Python tests
 
-## Receiver flow
+## Flow
 
-1. Load the receiver UI on the Vega device.
-2. Create or enter a session ID.
-3. Paste an offer manually **or** connect the page to the optional AWS WebSocket signaling endpoint.
-4. The receiver answers the WebRTC offer and prefers host ICE candidates before relay-style fallbacks.
+1. The TV app shows a pairing code (kept across launches) and joins that session as `receiver`.
+2. The sender enters the code, captures the screen, joins as `sender` and sends an offer.
+3. The Lambda relays messages only between the sender and receiver in the same session. Session and role come from the connection record, never from the message.
+4. The TV answers, both sides trickle ICE candidates, and video flows directly over the LAN.
+5. When either side leaves, the other gets `peer-left`. The TV goes back to showing its code.
+
+## Try it end to end
+
+```bash
+npm run deploy:signaling     # deploys the stack, writes tandem.config.json
+npm run smoke:signaling      # checks the deployed relay with two fake clients
+
+cd vega-app && npm run build:debug \
+  && vega run-app build/armv7-debug/tandemreceiver_armv7.vpkg   # TV shows a code
+
+cd .. && python3 -m http.server 8080
+# In desktop Chrome on the same WiFi: http://localhost:8080/public/sender/
+```
+
+The sender page reads the endpoint from `tandem.config.json` and shows the selected ICE path, resolution, frame rate, codec and bitrate while sharing.
+
+Mobile browsers can't capture the screen, so phones will need a native sender app.
 
 ## AWS signaling stack
 
 The CloudFormation template provisions:
 
-- API Gateway WebSocket API for signaling
-- Lambda handler for session coordination
-- DynamoDB table for connection/session lookups
+- API Gateway WebSocket API (`$connect`, `$disconnect`, `$default`), auto-deployed and throttled
+- Lambda relay (`infra/lambda/signaling.py`)
+- DynamoDB table of connections, with a TTL for records `$disconnect` missed
 
-The stack only coordinates offers, answers, and ICE candidates. Screen media is not routed through AWS.
+Clients send a `ping` every 5 minutes, because API Gateway drops WebSockets that are idle for 10 minutes. The receiver reconnects after drops.
 
 ## Vega app
 
-`/vega-app` is a Vega WebView app (generated from the SDK's `vegaWebview` template) that hosts the receiver page from `file:///pkg/assets`. Chromium blocks ES module scripts on `file://`, so `scripts/build-vega-assets.mjs` flattens the receiver modules into one classic script and copies it, plus the WebRTC probe, into `vega-app/assets`. The Vega build scripts run this step automatically.
+`/vega-app` is a Vega WebView app (generated from the SDK's `vegaWebview` template) that hosts the receiver page from `file:///pkg/assets`. Chromium blocks ES module scripts on `file://`, so `scripts/build-vega-assets.mjs` flattens the receiver modules into one classic script. It inlines the signaling endpoint (from `TANDEM_SIGNALING_URL` or `tandem.config.json`) and copies everything, plus the WebRTC probe, into `vega-app/assets`. The Vega build scripts run this step automatically.
 
 ```bash
 cd vega-app
@@ -47,13 +67,13 @@ The Vega Virtual Device can't run this app because it lacks the WebView 4 module
 
 ### WebRTC probe
 
-Vega's docs don't say whether the WebView (Chromium 144 as of SDK 0.24) ships WebRTC. Before building further, open **Run WebRTC diagnostics** on the receiver page. It checks the WebRTC APIs, the video receive codecs, ICE host candidates (including mDNS obfuscation), and a loopback video decode. It shows the results on screen and logs them with the `[tandem]` prefix:
+**Run WebRTC diagnostics** on the receiver page checks the WebRTC APIs, the video receive codecs, ICE host candidates (including mDNS obfuscation), and a loopback video decode. It shows the results on screen and logs them with the `[tandem]` prefix:
 
 ```bash
 vega device start-log-stream   # look for "[tandem] probe-report"
 ```
 
-The same probe runs in a desktop browser at `/public/probe/` for comparison.
+On a Fire TV Stick (WebView Chromium 144), everything passes. The one warning: the TV's host candidates are mDNS `.local` names only.
 
 ## Local validation
 

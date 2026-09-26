@@ -1,69 +1,78 @@
+import { generateSessionCode } from "../../src/receiver/config.js";
 import { ScreenMirrorReceiver } from "../../src/receiver/receiver.js";
 
+const SESSION_CODE_STORAGE_KEY = "tandem.sessionCode";
+const STATUS_MESSAGES = {
+  "signaling-connecting": "Connecting to Tandem…",
+  waiting: "Waiting for a screen share.",
+  connecting: "Connecting to the sender…",
+  streaming: "Streaming.",
+  "signaling-closed": "Connection lost. Reconnecting…",
+  error: "Something went wrong with the last screen share.",
+};
+
 const videoElement = document.querySelector("#receiver-video");
-const offerInput = document.querySelector("#offer-input");
-const answerOutput = document.querySelector("#answer-output");
-const sessionIdInput = document.querySelector("#session-id");
-const stunUrlInput = document.querySelector("#stun-url");
-const signalingEndpointInput = document.querySelector("#signaling-endpoint");
-const signalStatus = document.querySelector("#signal-status");
-const receiverStatus = document.querySelector("#receiver-status");
-let currentReceiver = null;
-let currentReceiverKey = "";
+const sessionCodeElement = document.querySelector("#session-code");
+const statusElement = document.querySelector("#receiver-status");
 
-function setReceiverStatus(message) {
-  receiverStatus.textContent = message;
+// The Vega build injects window.TANDEM_CONFIG; in a desktop browser pass
+// ?signaling=wss://... instead.
+function readConfig() {
+  const params = new URLSearchParams(location.search);
+  const injected = globalThis.TANDEM_CONFIG ?? {};
+
+  return {
+    signalingEndpoint: params.get("signaling") ?? injected.signalingEndpoint ?? "",
+    stunServerUrl: params.get("stun") ?? injected.stunServerUrl ?? "",
+  };
 }
 
-function buildReceiver() {
-  const receiverKey = JSON.stringify({
-    sessionId: sessionIdInput.value,
-    signalingEndpoint: signalingEndpointInput.value,
-    stunServerUrl: stunUrlInput.value,
-  });
-
-  if (!currentReceiver || currentReceiverKey !== receiverKey) {
-    currentReceiver?.dispose();
-    currentReceiverKey = receiverKey;
-    currentReceiver = new ScreenMirrorReceiver(videoElement, {
-      sessionId: sessionIdInput.value,
-      signalingEndpoint: signalingEndpointInput.value,
-      stunServerUrl: stunUrlInput.value,
-    });
-  }
-
-  return currentReceiver;
-}
-
-document.querySelector("#accept-offer").addEventListener("click", async () => {
+// Keep the same code across launches so a sender can reconnect without
+// looking at the TV again. Storage can be unavailable; fall back to a fresh code.
+function loadSessionCode() {
   try {
-    const receiver = buildReceiver();
-    const answer = await receiver.acceptOffer(JSON.parse(offerInput.value));
-    answerOutput.value = JSON.stringify(answer, null, 2);
-    setReceiverStatus("Offer accepted. Answer ready to send.");
-  } catch (error) {
-    setReceiverStatus(`Offer handling failed: ${error.message}`);
-  }
-});
-
-document
-  .querySelector("#connect-signaling")
-  .addEventListener("click", async () => {
-    try {
-      const receiver = buildReceiver();
-      const signalingSocket = await receiver.connectSignaling((state) => {
-        signalStatus.textContent = state;
-        if (state === "error") {
-          setReceiverStatus("Signaling connection failed.");
-        }
-      });
-      if (!signalingSocket) {
-        signalStatus.textContent = "not connected";
-        setReceiverStatus("Add both a session ID and signaling endpoint first.");
-        return;
-      }
-      setReceiverStatus("Waiting for a remote offer through signaling.");
-    } catch (error) {
-      setReceiverStatus(`Signaling setup failed: ${error.message}`);
+    const stored = localStorage.getItem(SESSION_CODE_STORAGE_KEY);
+    if (stored) {
+      return stored;
     }
+
+    const code = generateSessionCode();
+    localStorage.setItem(SESSION_CODE_STORAGE_KEY, code);
+    return code;
+  } catch {
+    return generateSessionCode();
+  }
+}
+
+function setStatus(message, isProblem = false) {
+  statusElement.textContent = message;
+  statusElement.classList.toggle("problem", isProblem);
+}
+
+function start() {
+  const config = readConfig();
+  const sessionCode = loadSessionCode();
+  sessionCodeElement.textContent = sessionCode;
+
+  if (!config.signalingEndpoint) {
+    setStatus("No signaling endpoint configured. Run npm run deploy:signaling, then rebuild.", true);
+    return;
+  }
+
+  const receiver = new ScreenMirrorReceiver(videoElement, {
+    ...config,
+    sessionId: sessionCode,
+    onStateChange(state, detail) {
+      document.body.classList.toggle("streaming", state === "streaming");
+      setStatus(
+        detail ?? STATUS_MESSAGES[state] ?? state,
+        state === "error" || state === "signaling-closed" || Boolean(detail),
+      );
+      console.info(`[tandem-receiver] ${state}${detail ? `: ${detail}` : ""}`);
+    },
   });
+
+  receiver.connectSignaling();
+}
+
+start();

@@ -10,10 +10,15 @@ import {
   toClassicScript,
 } from "../scripts/build-vega-assets.mjs";
 
-async function buildIntoTempDir(t) {
+const TEST_CONFIG = {
+  signalingEndpoint: "wss://example.execute-api.us-west-2.amazonaws.com/prod",
+  stunServerUrl: "",
+};
+
+async function buildIntoTempDir(t, config = TEST_CONFIG) {
   const outDir = await mkdtemp(path.join(tmpdir(), "tandem-vega-assets-"));
   t.after(() => rm(outDir, { force: true, recursive: true }));
-  await buildVegaAssets({ outDir });
+  await buildVegaAssets({ outDir, config });
   return outDir;
 }
 
@@ -52,24 +57,63 @@ test("vega assets load the receiver as a classic script and link the probe local
   assert.match(probeHtml, /href="\.\/index\.html"/);
 });
 
-test("receiver bundle runs without module imports and wires up the page", async (t) => {
+test("vega receiver page embeds config without letting it close the script tag", async (t) => {
+  const outDir = await buildIntoTempDir(t, {
+    signalingEndpoint: "wss://example.test/</script><script>alert(1)</script>",
+    stunServerUrl: "",
+  });
+  const receiverHtml = await readFile(path.join(outDir, "index.html"), "utf8");
+
+  assert.equal(receiverHtml.match(/<\/script>/g).length, 2);
+  assert.match(receiverHtml, /window\.TANDEM_CONFIG = \{"signalingEndpoint":"wss:\/\/example\.test\/\\u003c\/script>/);
+});
+
+test("receiver bundle runs without module imports and joins signaling with a stored code", async (t) => {
   const outDir = await buildIntoTempDir(t);
   const bundle = await readFile(path.join(outDir, RECEIVER_BUNDLE_NAME), "utf8");
-  const listeners = {};
+  const elements = {};
+  const sockets = [];
+
+  class FakeWebSocket {
+    static CLOSED = 3;
+    static OPEN = 1;
+
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      sockets.push(this);
+    }
+
+    addEventListener() {}
+  }
 
   const document = {
+    body: { classList: { toggle() {} } },
     querySelector(selector) {
-      return {
-        addEventListener(name, listener) {
-          listeners[`${selector}:${name}`] = listener;
-        },
-        value: "",
-      };
+      elements[selector] ??= { classList: { toggle() {} }, textContent: "" };
+      return elements[selector];
     },
   };
+  const storage = new Map([["tandem.sessionCode", "K7P2QX"]]);
 
-  vm.runInNewContext(bundle, { JSON, URL, console, document });
+  vm.runInNewContext(bundle, {
+    TANDEM_CONFIG: TEST_CONFIG,
+    URL,
+    URLSearchParams,
+    WebSocket: FakeWebSocket,
+    console,
+    crypto,
+    document,
+    localStorage: {
+      getItem: (key) => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, value),
+    },
+    location: { search: "" },
+  });
 
-  assert.equal(typeof listeners["#accept-offer:click"], "function");
-  assert.equal(typeof listeners["#connect-signaling:click"], "function");
+  assert.equal(elements["#session-code"].textContent, "K7P2QX");
+  assert.equal(sockets.length, 1);
+  const socketUrl = new URL(sockets[0].url);
+  assert.equal(socketUrl.searchParams.get("sessionId"), "K7P2QX");
+  assert.equal(socketUrl.searchParams.get("role"), "receiver");
 });

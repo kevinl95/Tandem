@@ -5,8 +5,11 @@
   "type": "module",
   "main": "src/receiver/config.js",
   "scripts": {
-    "test": "node --test",
-    "build:vega-assets": "node scripts/build-vega-assets.mjs"
+    "test": "node --test test/*.test.js",
+    "build:vega-assets": "node scripts/build-vega-assets.mjs",
+    "sync:lambda": "node scripts/sync-lambda.mjs",
+    "deploy:signaling": "scripts/deploy-signaling.sh",
+    "smoke:signaling": "node scripts/smoke-signaling.mjs"
   },
   "repository": {
     "type": "git",
