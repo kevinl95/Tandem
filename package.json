@@ -1,0 +1,23 @@
+{
+  "name": "tandem",
+  "version": "1.0.0",
+  "description": "Amazon Vega / Fire TV screen mirroring receiver with optional AWS signaling.",
+  "type": "module",
+  "main": "src/receiver/config.js",
+  "scripts": {
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://localhost:26831/kevinl95/Tandem"
+  },
+  "keywords": [
+    "webrtc",
+    "fire-tv",
+    "vega",
+    "screen-mirroring",
+    "cloudformation"
+  ],
+  "author": "",
+  "license": "MIT"
+}
