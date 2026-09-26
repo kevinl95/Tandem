@@ -1,0 +1,505 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Optional AWS signaling infrastructure for Tandem Vega screen mirroring.",
+  "Parameters": {
+    "StageName": {
+      "Type": "String",
+      "Default": "prod",
+      "AllowedPattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "SessionTableName": {
+      "Type": "String",
+      "Default": "tandem-vega-sessions"
+    },
+    "StunServerUrl": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional STUN server URL to distribute to devices for broader connectivity."
+    }
+  },
+  "Resources": {
+    "SessionsTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "pk",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "sk",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "pk",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "sk",
+            "KeyType": "RANGE"
+          }
+        ],
+        "TableName": {
+          "Ref": "SessionTableName"
+        }
+      }
+    },
+    "SignalingRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "tandem-signaling",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:BatchWriteItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:Query"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "SessionsTable",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "execute-api:ManageConnections"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SignalingApi}/${StageName}/*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "SignalingFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Runtime": "python3.12",
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "SignalingRole",
+            "Arn"
+          ]
+        },
+        "Timeout": 10,
+        "Environment": {
+          "Variables": {
+            "SESSION_TABLE_NAME": {
+              "Ref": "SessionTableName"
+            },
+            "STUN_SERVER_URL": {
+              "Ref": "StunServerUrl"
+            }
+          }
+        },
+        "Code": {
+          "ZipFile": {
+            "Fn::Join": [
+              "\n",
+              [
+                "import json",
+                "import logging",
+                "import os",
+                "",
+                "import boto3",
+                "from boto3.dynamodb.conditions import Key",
+                "from botocore.exceptions import ClientError",
+                "",
+                "LOGGER = logging.getLogger()",
+                "LOGGER.setLevel(logging.INFO)",
+                "",
+                "TABLE_NAME = os.environ['SESSION_TABLE_NAME']",
+                "TABLE = boto3.resource('dynamodb').Table(TABLE_NAME)",
+                "MANAGEMENT_CLIENTS = {}",
+                "",
+                "",
+                "def parse_body(event):",
+                "    return json.loads(event['body']) if event.get('body') else {}",
+                "",
+                "",
+                "def get_management_client(domain_name, stage):",
+                "    endpoint_url = f'https://{domain_name}/{stage}'",
+                "",
+                "    if endpoint_url not in MANAGEMENT_CLIENTS:",
+                "        MANAGEMENT_CLIENTS[endpoint_url] = boto3.client(",
+                "            'apigatewaymanagementapi',",
+                "            endpoint_url=endpoint_url,",
+                "        )",
+                "",
+                "    return MANAGEMENT_CLIENTS[endpoint_url]",
+                "",
+                "",
+                "def remove_connection(session_id, connection_id):",
+                "    with TABLE.batch_writer() as batch:",
+                "        batch.delete_item(",
+                "            Key={",
+                "                'pk': f'session#{session_id}',",
+                "                'sk': f'connection#{connection_id}',",
+                "            },",
+                "        )",
+                "        batch.delete_item(",
+                "            Key={",
+                "                'pk': f'connection#{connection_id}',",
+                "                'sk': 'meta',",
+                "            },",
+                "        )",
+                "",
+                "",
+                "def list_peers(session_id, role):",
+                "    response = TABLE.query(",
+                "        KeyConditionExpression=Key('pk').eq(f'session#{session_id}'),",
+                "    )",
+                "",
+                "    return [item for item in response.get('Items', []) if item.get('role') != role]",
+                "",
+                "",
+                "def post_to_connection(domain_name, stage, session_id, connection_id, payload):",
+                "    client = get_management_client(domain_name, stage)",
+                "",
+                "    try:",
+                "        client.post_to_connection(",
+                "            ConnectionId=connection_id,",
+                "            Data=json.dumps(payload).encode('utf-8'),",
+                "        )",
+                "        return True",
+                "    except client.exceptions.GoneException:",
+                "        remove_connection(session_id, connection_id)",
+                "        return False",
+                "    except ClientError as error:",
+                "        if error.response.get('Error', {}).get('Code') == 'GoneException':",
+                "            remove_connection(session_id, connection_id)",
+                "            return False",
+                "",
+                "        LOGGER.exception('PostToConnection failed', extra={'connectionId': connection_id})",
+                "        return False",
+                "",
+                "",
+                "def handler(event, _context):",
+                "    route_key = event['requestContext']['routeKey']",
+                "    connection_id = event['requestContext']['connectionId']",
+                "    domain_name = event['requestContext']['domainName']",
+                "    stage = event['requestContext']['stage']",
+                "    request_body = parse_body(event)",
+                "    session_id = (event.get('queryStringParameters') or {}).get('sessionId') or request_body.get('sessionId')",
+                "    role = (event.get('queryStringParameters') or {}).get('role') or request_body.get('role') or 'unknown'",
+                "",
+                "    if route_key == '$connect':",
+                "        if not session_id:",
+                "            return {'statusCode': 400, 'body': 'sessionId is required'}",
+                "",
+                "        with TABLE.batch_writer() as batch:",
+                "            batch.put_item(",
+                "                Item={",
+                "                    'pk': f'session#{session_id}',",
+                "                    'sk': f'connection#{connection_id}',",
+                "                    'connectionId': connection_id,",
+                "                    'role': role,",
+                "                },",
+                "            )",
+                "            batch.put_item(",
+                "                Item={",
+                "                    'pk': f'connection#{connection_id}',",
+                "                    'sk': 'meta',",
+                "                    'sessionId': session_id,",
+                "                    'role': role,",
+                "                },",
+                "            )",
+                "",
+                "        return {",
+                "            'statusCode': 200,",
+                "            'body': json.dumps({",
+                "                'ok': True,",
+                "                'stunServerUrl': os.environ.get('STUN_SERVER_URL', ''),",
+                "            }),",
+                "        }",
+                "",
+                "    if route_key == '$disconnect':",
+                "        connection_record = TABLE.get_item(",
+                "            Key={",
+                "                'pk': f'connection#{connection_id}',",
+                "                'sk': 'meta',",
+                "            },",
+                "        )",
+                "",
+                "        if 'Item' not in connection_record or 'sessionId' not in connection_record['Item']:",
+                "            return {",
+                "                'statusCode': 200,",
+                "                'body': json.dumps({'ok': True, 'removed': False}),",
+                "            }",
+                "",
+                "        session_id = connection_record['Item']['sessionId']",
+                "        remove_connection(session_id, connection_id)",
+                "",
+                "        return {",
+                "            'statusCode': 200,",
+                "            'body': json.dumps({'ok': True, 'removed': True}),",
+                "        }",
+                "",
+                "    if not session_id:",
+                "        return {'statusCode': 400, 'body': 'sessionId is required'}",
+                "",
+                "    peers = list_peers(session_id, role)",
+                "    delivery_results = [",
+                "        post_to_connection(",
+                "            domain_name,",
+                "            stage,",
+                "            session_id,",
+                "            peer['connectionId'],",
+                "            request_body,",
+                "        )",
+                "        for peer in peers",
+                "    ]",
+                "",
+                "    return {",
+                "        'statusCode': 200,",
+                "        'body': json.dumps({",
+                "            'delivered': len([result for result in delivery_results if result]),",
+                "            'requested': len(peers),",
+                "        }),",
+                "    }",
+                ""
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "SignalingApi": {
+      "Type": "AWS::ApiGatewayV2::Api",
+      "Properties": {
+        "Name": "tandem-vega-signaling",
+        "ProtocolType": "WEBSOCKET",
+        "RouteSelectionExpression": "$request.body.type"
+      }
+    },
+    "SignalingIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": {
+          "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SignalingFunction.Arn}/invocations"
+        }
+      }
+    },
+    "ConnectRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
+        "RouteKey": "$connect",
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    "DisconnectRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
+        "RouteKey": "$disconnect",
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    "DefaultRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
+        "RouteKey": "$default",
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    "SignalOfferRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
+        "RouteKey": "offer",
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    "SignalAnswerRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
+        "RouteKey": "answer",
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    "SignalIceRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
+        "RouteKey": "ice",
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "SignalingIntegration"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    "Deployment": {
+      "Type": "AWS::ApiGatewayV2::Deployment",
+      "DependsOn": [
+        "ConnectRoute",
+        "DisconnectRoute",
+        "DefaultRoute",
+        "SignalOfferRoute",
+        "SignalAnswerRoute",
+        "SignalIceRoute"
+      ],
+      "Properties": {
+        "ApiId": {
+          "Ref": "SignalingApi"
+        }
+      }
+    },
+    "Stage": {
+      "Type": "AWS::ApiGatewayV2::Stage",
+      "Properties": {
+        "ApiId": {
+          "Ref": "SignalingApi"
+        },
+        "AutoDeploy": false,
+        "DeploymentId": {
+          "Ref": "Deployment"
+        },
+        "StageName": {
+          "Ref": "StageName"
+        }
+      }
+    },
+    "SignalingPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Ref": "SignalingFunction"
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SignalingApi}/${StageName}/*"
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "SignalingWebSocketUrl": {
+      "Value": {
+        "Fn::Sub": "wss://${SignalingApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+      }
+    },
+    "SessionsTableName": {
+      "Value": {
+        "Ref": "SessionTableName"
+      }
+    },
+    "ConfiguredStunServerUrl": {
+      "Value": {
+        "Ref": "StunServerUrl"
+      }
+    }
+  }
+}

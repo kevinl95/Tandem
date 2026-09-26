@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tandem Vega Receiver</title>
+    <style>
+      body {
+        background: #111827;
+        color: #f9fafb;
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 24px;
+      }
+
+      main {
+        display: grid;
+        gap: 16px;
+        margin: 0 auto;
+        max-width: 960px;
+      }
+
+      textarea,
+      input,
+      button {
+        border-radius: 8px;
+        border: 1px solid #374151;
+        box-sizing: border-box;
+        font: inherit;
+        padding: 12px;
+        width: 100%;
+      }
+
+      button {
+        background: #2563eb;
+        color: white;
+        cursor: pointer;
+        width: auto;
+      }
+
+      video {
+        background: black;
+        border-radius: 12px;
+        min-height: 320px;
+        width: 100%;
+      }
+
+      .row {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h1>Tandem Vega Receiver</h1>
+        <p>
+          Direct WebRTC screen mirroring receiver with preferred host ICE and optional AWS signaling.
+        </p>
+      </section>
+
+      <section class="row">
+        <label>
+          Session ID
+          <input id="session-id" placeholder="living-room" />
+        </label>
+        <label>
+          Optional STUN URL
+          <input id="stun-url" placeholder="stun:stun.example.internal:3478" />
+        </label>
+        <label>
+          Optional signaling endpoint
+          <input id="signaling-endpoint" placeholder="wss://example.execute-api.region.amazonaws.com/prod" />
+        </label>
+      </section>
+
+      <section>
+        <button id="connect-signaling">Connect signaling</button>
+        <span id="signal-status" role="status" aria-live="polite">Not connected</span>
+      </section>
+
+      <section>
+        <p id="receiver-status" role="alert" aria-live="assertive">Ready to receive a screen share.</p>
+      </section>
+
+      <section>
+        <label>
+          Manual offer JSON
+          <textarea id="offer-input" rows="8" placeholder='{"type":"offer","sdp":"..."}'></textarea>
+        </label>
+        <button id="accept-offer">Accept offer</button>
+      </section>
+
+      <section>
+        <label>
+          Receiver answer JSON
+          <textarea id="answer-output" rows="8" readonly></textarea>
+        </label>
+      </section>
+
+      <section>
+        <video id="receiver-video" aria-label="Mirrored screen output" autoplay playsinline></video>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
