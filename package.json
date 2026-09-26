@@ -5,7 +5,8 @@
   "type": "module",
   "main": "src/receiver/config.js",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "build:vega-assets": "node scripts/build-vega-assets.mjs"
   },
   "repository": {
     "type": "git",

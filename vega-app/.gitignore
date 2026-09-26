@@ -1,0 +1,17 @@
+*.iml
+*.swp
+.idea
+.DS_Store
+.vscode
+.tmp
+
+dist
+build
+node_modules
+CMakeUserPresets.json
+npm-debug.log
+# Generated from ../public and ../src by ../scripts/build-vega-assets.mjs
+assets/index.html
+assets/tandem-receiver.js
+assets/probe.html
+assets/probe.js
