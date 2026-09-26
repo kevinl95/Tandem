@@ -99,8 +99,8 @@ export class ScreenMirrorReceiver {
     await this.flushPendingIceCandidates();
 
     return {
-      sdp: answer.sdp,
-      type: answer.type,
+      sdp: this.peerConnection.localDescription?.sdp ?? answer.sdp,
+      type: this.peerConnection.localDescription?.type ?? answer.type,
     };
   }
 
