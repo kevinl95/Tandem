@@ -11,6 +11,7 @@ export class ScreenMirrorReceiver {
 
     this.videoElement = videoElement;
     this.runtimeConfig = createReceiverRuntimeConfig(options);
+    this.isFlushingRemoteCandidates = false;
     this.pendingRemoteCandidates = [];
     this.pendingRemoteEndOfCandidates = undefined;
     this.signalingSocket = null;
@@ -115,7 +116,10 @@ export class ScreenMirrorReceiver {
       return;
     }
 
-    if (!this.peerConnection.remoteDescription) {
+    if (
+      this.isFlushingRemoteCandidates ||
+      !this.peerConnection.remoteDescription
+    ) {
       this.pendingRemoteCandidates.push(candidate);
       this.pendingRemoteCandidates = prioritizeIceCandidates(
         this.pendingRemoteCandidates,
@@ -127,20 +131,28 @@ export class ScreenMirrorReceiver {
   }
 
   async flushPendingIceCandidates() {
-    const prioritizedCandidates = prioritizeIceCandidates(
-      this.pendingRemoteCandidates,
-    );
+    this.isFlushingRemoteCandidates = true;
 
-    this.pendingRemoteCandidates = [];
-    for (const candidate of prioritizedCandidates) {
-      await this.peerConnection.addIceCandidate(candidate);
-    }
+    try {
+      while (this.pendingRemoteCandidates.length > 0) {
+        const prioritizedCandidates = prioritizeIceCandidates(
+          this.pendingRemoteCandidates,
+        );
 
-    if (this.pendingRemoteEndOfCandidates !== undefined) {
-      await this.peerConnection.addIceCandidate(
-        this.pendingRemoteEndOfCandidates,
-      );
-      this.pendingRemoteEndOfCandidates = undefined;
+        this.pendingRemoteCandidates = [];
+        for (const candidate of prioritizedCandidates) {
+          await this.peerConnection.addIceCandidate(candidate);
+        }
+      }
+
+      if (this.pendingRemoteEndOfCandidates !== undefined) {
+        await this.peerConnection.addIceCandidate(
+          this.pendingRemoteEndOfCandidates,
+        );
+        this.pendingRemoteEndOfCandidates = undefined;
+      }
+    } finally {
+      this.isFlushingRemoteCandidates = false;
     }
   }
 

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 const templatePath = new URL(
   "../infra/cloudformation/vega-mirroring.json",
@@ -36,6 +37,19 @@ test("cloudformation template exports websocket endpoint", () => {
     template.Outputs.SignalingWebSocketUrl.Value["Fn::Sub"],
     /^wss:\/\//,
   );
+});
+
+test("cloudformation template inline handler compiles as valid Python", () => {
+  const [separator, lines] =
+    template.Resources.SignalingFunction.Properties.Code.ZipFile["Fn::Join"];
+  const source = lines.join(separator);
+  const result = spawnSync(
+    "python",
+    ["-c", "import sys; compile(sys.stdin.read(), '<inline>', 'exec')"],
+    { input: source, encoding: "utf8" },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test("cloudformation template scopes API Gateway invoke permission to the signaling API stage", () => {
