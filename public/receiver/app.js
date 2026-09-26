@@ -7,8 +7,13 @@ const sessionIdInput = document.querySelector("#session-id");
 const stunUrlInput = document.querySelector("#stun-url");
 const signalingEndpointInput = document.querySelector("#signaling-endpoint");
 const signalStatus = document.querySelector("#signal-status");
+const receiverStatus = document.querySelector("#receiver-status");
 let currentReceiver = null;
 let currentReceiverKey = "";
+
+function setReceiverStatus(message) {
+  receiverStatus.textContent = message;
+}
 
 function buildReceiver() {
   const receiverKey = JSON.stringify({
@@ -31,16 +36,29 @@ function buildReceiver() {
 }
 
 document.querySelector("#accept-offer").addEventListener("click", async () => {
-  const receiver = buildReceiver();
-  const answer = await receiver.acceptOffer(JSON.parse(offerInput.value));
-  answerOutput.value = JSON.stringify(answer, null, 2);
+  try {
+    const receiver = buildReceiver();
+    const answer = await receiver.acceptOffer(JSON.parse(offerInput.value));
+    answerOutput.value = JSON.stringify(answer, null, 2);
+    setReceiverStatus("Offer accepted. Answer ready to send.");
+  } catch (error) {
+    setReceiverStatus(`Offer handling failed: ${error.message}`);
+  }
 });
 
 document
   .querySelector("#connect-signaling")
   .addEventListener("click", async () => {
-    const receiver = buildReceiver();
-    await receiver.connectSignaling((state) => {
-      signalStatus.textContent = state;
-    });
+    try {
+      const receiver = buildReceiver();
+      await receiver.connectSignaling((state) => {
+        signalStatus.textContent = state;
+        if (state === "error") {
+          setReceiverStatus("Signaling connection failed.");
+        }
+      });
+      setReceiverStatus("Waiting for a remote offer through signaling.");
+    } catch (error) {
+      setReceiverStatus(`Signaling setup failed: ${error.message}`);
+    }
   });

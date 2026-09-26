@@ -45,33 +45,36 @@ export class ScreenMirrorReceiver {
     this.signalingSocket.addEventListener("open", () =>
       onSignalStateChange("connected"),
     );
+    this.signalingSocket.addEventListener("error", () =>
+      onSignalStateChange("error"),
+    );
     this.signalingSocket.addEventListener("close", () =>
       onSignalStateChange("disconnected"),
     );
     this.signalingSocket.addEventListener("message", async (event) => {
-      const message = JSON.parse(event.data);
+      try {
+        const message = JSON.parse(event.data);
 
-      if (message.type === "offer" && message.sdp) {
-        const answer = await this.acceptOffer({ sdp: message.sdp });
-        this.sendSignal({
-          sessionId: this.runtimeConfig.sessionId,
-          type: "answer",
-          ...answer,
-        });
-      }
+        if (message.type === "offer" && message.sdp) {
+          const answer = await this.acceptOffer({ sdp: message.sdp });
+          this.sendSignal({
+            sessionId: this.runtimeConfig.sessionId,
+            type: "answer",
+            ...answer,
+          });
+        }
 
-      if (message.type === "ice" && message.candidate) {
-        await this.addIceCandidate(message.candidate);
+        if (message.type === "ice") {
+          await this.addIceCandidate(message.candidate ?? null);
+        }
+      } catch (error) {
+        onSignalStateChange("error");
       }
     });
 
     this.peerConnection.addEventListener("icecandidate", (event) => {
-      if (!event.candidate) {
-        return;
-      }
-
       this.sendSignal({
-        candidate: event.candidate.toJSON(),
+        candidate: event.candidate ? event.candidate.toJSON() : null,
         sessionId: this.runtimeConfig.sessionId,
         type: "ice",
       });
