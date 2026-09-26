@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const templatePath =
-  "/home/runner/work/Tandem/Tandem/infra/cloudformation/vega-mirroring.json";
+const templatePath = new URL(
+  "../infra/cloudformation/vega-mirroring.json",
+  import.meta.url,
+);
 const template = JSON.parse(readFileSync(templatePath, "utf8"));
 
 test("cloudformation template keeps STUN optional", () => {
@@ -29,5 +31,12 @@ test("cloudformation template exports websocket endpoint", () => {
   assert.match(
     template.Outputs.SignalingWebSocketUrl.Value["Fn::Sub"],
     /^wss:\/\//,
+  );
+});
+
+test("cloudformation template scopes API Gateway invoke permission to the signaling API stage", () => {
+  assert.equal(
+    template.Resources.SignalingPermission.Properties.SourceArn["Fn::Sub"],
+    "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SignalingApi}/${StageName}/*",
   );
 });

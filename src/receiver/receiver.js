@@ -34,7 +34,7 @@ export class ScreenMirrorReceiver {
     signalingUrl.searchParams.set("sessionId", this.runtimeConfig.sessionId);
     signalingUrl.searchParams.set("role", "receiver");
 
-    this.signalingSocket = new WebSocket(signalingUrl);
+    this.signalingSocket = new WebSocket(String(signalingUrl));
     this.signalingSocket.addEventListener("open", () =>
       onSignalStateChange("connected"),
     );
@@ -46,7 +46,11 @@ export class ScreenMirrorReceiver {
 
       if (message.type === "offer" && message.sdp) {
         const answer = await this.acceptOffer({ sdp: message.sdp });
-        this.sendSignal({ sessionId: this.runtimeConfig.sessionId, ...answer });
+        this.sendSignal({
+          sessionId: this.runtimeConfig.sessionId,
+          type: "answer",
+          ...answer,
+        });
       }
 
       if (message.type === "ice" && message.candidate) {
