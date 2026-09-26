@@ -12,6 +12,7 @@ export class ScreenMirrorReceiver {
     this.videoElement = videoElement;
     this.runtimeConfig = createReceiverRuntimeConfig(options);
     this.pendingRemoteCandidates = [];
+    this.pendingRemoteEndOfCandidates = undefined;
     this.signalingSocket = null;
     this.peerConnection = new RTCPeerConnection(
       this.runtimeConfig.peerConfiguration,
@@ -106,7 +107,7 @@ export class ScreenMirrorReceiver {
   async addIceCandidate(candidate) {
     if (candidate == null || candidate.candidate === "") {
       if (!this.peerConnection.remoteDescription) {
-        this.pendingRemoteCandidates.push(candidate);
+        this.pendingRemoteEndOfCandidates = candidate;
         return;
       }
 
@@ -133,6 +134,13 @@ export class ScreenMirrorReceiver {
     this.pendingRemoteCandidates = [];
     for (const candidate of prioritizedCandidates) {
       await this.peerConnection.addIceCandidate(candidate);
+    }
+
+    if (this.pendingRemoteEndOfCandidates !== undefined) {
+      await this.peerConnection.addIceCandidate(
+        this.pendingRemoteEndOfCandidates,
+      );
+      this.pendingRemoteEndOfCandidates = undefined;
     }
   }
 
