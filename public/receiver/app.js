@@ -51,12 +51,17 @@ document
   .addEventListener("click", async () => {
     try {
       const receiver = buildReceiver();
-      await receiver.connectSignaling((state) => {
+      const signalingSocket = await receiver.connectSignaling((state) => {
         signalStatus.textContent = state;
         if (state === "error") {
           setReceiverStatus("Signaling connection failed.");
         }
       });
+      if (!signalingSocket) {
+        signalStatus.textContent = "not connected";
+        setReceiverStatus("Add both a session ID and signaling endpoint first.");
+        return;
+      }
       setReceiverStatus("Waiting for a remote offer through signaling.");
     } catch (error) {
       setReceiverStatus(`Signaling setup failed: ${error.message}`);

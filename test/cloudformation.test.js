@@ -25,6 +25,10 @@ test("cloudformation template provisions signaling coordination resources", () =
     template.Resources.SessionsTable.Type,
     "AWS::DynamoDB::Table",
   );
+  assert.ok(
+    template.Resources.SignalingFunction.Properties.Code.ZipFile,
+    "expected inline Lambda code to be wrapped in Code.ZipFile",
+  );
 });
 
 test("cloudformation template exports websocket endpoint", () => {

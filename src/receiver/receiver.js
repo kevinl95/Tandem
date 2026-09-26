@@ -65,7 +65,9 @@ export class ScreenMirrorReceiver {
         }
 
         if (message.type === "ice") {
-          await this.addIceCandidate(message.candidate ?? null);
+          await this.addIceCandidate(
+            Object.hasOwn(message, "candidate") ? message.candidate : null,
+          );
         }
       } catch (error) {
         onSignalStateChange("error");
@@ -104,11 +106,11 @@ export class ScreenMirrorReceiver {
   async addIceCandidate(candidate) {
     if (candidate == null || candidate.candidate === "") {
       if (!this.peerConnection.remoteDescription) {
-        this.pendingRemoteCandidates.push(null);
+        this.pendingRemoteCandidates.push(candidate);
         return;
       }
 
-      await this.peerConnection.addIceCandidate(null);
+      await this.peerConnection.addIceCandidate(candidate);
       return;
     }
 
