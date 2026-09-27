@@ -1,6 +1,6 @@
 # Tandem
 
-Tandem mirrors a screen to an Amazon Vega Fire TV over the local network:
+The new Vega OS Fire TV sticks don't support Miracast, so there's no built-in way to mirror a phone or laptop to them. Tandem mirrors a screen to a Vega Fire TV over the local network:
 
 - **Sender → WebRTC → Vega receiver**, with media flowing directly over the LAN
 - **AWS signaling** (API Gateway WebSocket, Lambda, DynamoDB) only relays offers, answers and ICE candidates
@@ -23,7 +23,7 @@ Tandem mirrors a screen to an Amazon Vega Fire TV over the local network:
 
 1. The TV app joins as `receiver` with its pairing code (kept across launches) and a display name. The server lists it under the TV's public IP.
 2. A sender connects as `sender` with a stable client id and a name, and sends `discover`. It gets back the TVs on the same public IP.
-3. The sender captures the screen and sends an `offer` naming the TV's code. The server binds the sender to that session and forwards the offer to the TV. The server adds the sender's verified name, client id and a `sameNetwork` flag.
+3. The sender captures the screen and sends an `offer` naming the TV's code. The server binds the sender to that session and forwards the offer to the TV, along with the sender's verified name, client id and a `sameNetwork` flag.
 4. If the TV hasn't allowed this client id before, it replies `pending` and asks its viewer to Allow or Decline. It only answers allowed senders.
 5. The TV's `answer` and ICE go only to the sender it names (`to`). Media flows directly over the LAN.
 6. When either side leaves, the other gets `peer-left`. The TV goes back to showing its code.
@@ -34,7 +34,7 @@ Session, role and sender identity always come from the server's connection recor
 
 ```bash
 npm run deploy:signaling     # deploys the stack, writes tandem.config.json
-npm run smoke:signaling      # checks the deployed relay with two fake clients
+npm run smoke:signaling      # checks the deployed relay with fake TV and sender clients
 
 cd vega-app && npm run build:debug \
   && vega run-app build/armv7-debug/tandemreceiver_armv7.vpkg   # TV shows a code
@@ -59,29 +59,29 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 The APK is sideloaded; there's no store listing.
 
-**Audio** (Android 10+): the app sends the phone's media playback, using Android playback capture. Calls, notifications and apps that opt out of capture (typically DRM streaming apps) aren't included. WebRTC's Android audio pipeline is paced by a microphone recorder, so the app needs the microphone permission and shows the mic indicator while sharing. It overwrites every recorded buffer with playback audio or silence, so microphone audio is never sent. If the permission is denied, sharing continues video-only. This relies on `stream-webrtc-android` 1.1.3; later releases no longer call the record-data callback.
+**Audio** (Android 10+): The app sends the phone's media playback, using Android playback capture. Calls, notifications and apps that opt out of capture (typically DRM streaming apps) aren't included. WebRTC's Android audio pipeline is paced by a microphone recorder, so the app needs the microphone permission and shows the mic indicator while sharing. It overwrites every recorded buffer with playback audio or silence, so microphone audio is never sent. If the permission is denied, sharing continues video-only. This relies on `stream-webrtc-android` 1.1.3; later releases no longer call the record-data callback.
 
-**VPNs:** a phone on a VPN reaches AWS from the VPN's IP, so TVs on its WiFi aren't listed (enter the code instead). An always-on VPN that blocks non-VPN traffic also blocks the direct LAN connection to the TV, and the share fails. Allow local network (LAN) access in the VPN app, or exclude Tandem from the tunnel. The app shows a hint when a VPN is active.
+**VPNs:** A phone on a VPN reaches AWS from the VPN's IP, so TVs on its WiFi aren't listed (enter the code instead). An always-on VPN that blocks non-VPN traffic also blocks the direct LAN connection to the TV, and the share fails. Allow local network (LAN) access in the VPN app, or exclude Tandem from the tunnel. The app shows a hint when a VPN is active.
 
 ## Security
 
-- **TV approval** is enforced by the TV, which never answers a sender its viewer hasn't allowed. The prompt offers Allow, Decline and Block. Allowed devices are remembered by client id; blocked devices are declined silently, and a declined device can't prompt again for a minute. Devices from another network get a warning, and Decline is focused by default.
+- **TV approval:** The TV never answers a sender its viewer hasn't allowed. The prompt offers Allow, Decline and Block. Allowed devices are remembered by client id; blocked devices are declined silently, and a declined device can't prompt again for a minute. Devices from another network get a warning, and Decline is focused by default.
 - **Allowed devices** on the TV's pairing screen lists allowed and blocked devices, with Forget or Unblock for each and Forget all.
-- **Code ownership:** a TV claims its code with a secret it keeps locally; the server stores only a hash and refuses any other receiver presenting that code, so nobody can pose as a TV to receive its shares. Unused codes are released after 90 days.
+- **Code ownership:** A TV claims its code with a secret it keeps locally; the server stores only a hash and refuses any other receiver presenting that code, so nobody can pose as a TV to receive its shares. Unused codes are released after 90 days.
 - **Rate limits per source IP**, over 10-minute windows: 10 offers to codes with no TV behind them (guessing), and 30 offers of any kind (prompt spam, even with fresh client ids). Past either limit, offers from that IP are refused (`rate-limited`).
 - **Throttling** at the API Gateway stage caps total message rate.
 - Discovery only lists TVs sharing the sender's public IP. Anyone on the same network, including a shared or carrier-grade NAT, can see those TVs, but approval still gates sharing.
 
 ## Costs
 
-AWS only relays signaling; media never touches it, so there is no TURN server (it would bill every relayed gigabyte of video). What costs money is open connections and messages. At list prices (US regions, 2026), that's $0.25 per million connection-minutes and $1 per million messages, plus a Lambda invocation and DynamoDB access per relayed message. The design keeps both low:
+AWS only relays signaling, and media never touches it. There's deliberately no TURN server, because it would bill for every relayed gigabyte of video. The costs come from open connections and messages. At list prices (US regions, 2026), that's $0.25 per million connection-minutes and $1 per million messages, plus a Lambda invocation and DynamoDB access per relayed message. The design keeps both low:
 
 - The TV disconnects after 15 minutes with nobody sharing and reconnects when OK is pressed. The Android app disconnects when it's in the background and not sharing.
-- Keepalive `ping`s go every 9 minutes, and API Gateway answers them itself through a mock integration, with no Lambda or DynamoDB.
+- Keepalive `ping`s go every 9 minutes, just under API Gateway's 10-minute idle timeout. API Gateway answers them itself through a mock integration, with no Lambda or DynamoDB.
 - Senders refresh discovery every 15 seconds, and only while visible.
 - Failed TV reconnects back off exponentially, up to one minute apart.
 
-**Worst-case ceilings:** the stage throttle (default 200 messages/s, about $520 a month even if saturated), the Lambda's reserved concurrency (default 50) and an optional AWS Budgets alert. For the alert, deploy with `TANDEM_ALERT_EMAIL=you@example.com npm run deploy:signaling`; `TANDEM_BUDGET_USD` sets the monthly amount (default 25). `TANDEM_THROTTLE_RATE` and `TANDEM_THROTTLE_BURST` override the throttle (defaults 200 and 400).
+**Worst-case ceilings:** The stage throttle (default 200 messages/s, about $520 a month even if saturated), the Lambda's reserved concurrency (default 50) and an optional AWS Budgets alert. For the alert, deploy with `TANDEM_ALERT_EMAIL=you@example.com npm run deploy:signaling`; `TANDEM_BUDGET_USD` sets the monthly amount (default 25). `TANDEM_THROTTLE_RATE` and `TANDEM_THROTTLE_BURST` override the throttle (defaults 200 and 400).
 
 ## AWS signaling stack
 
@@ -89,9 +89,7 @@ The CloudFormation template provisions:
 
 - API Gateway WebSocket API (`$connect`, `$disconnect`, `$default`, and a mock `ping` route), auto-deployed and throttled
 - Lambda relay (`infra/lambda/signaling.py`)
-- DynamoDB table of connections, discovery listings and rate-limit counters, with a TTL for records `$disconnect` missed
-
-Clients send a `ping` every 9 minutes, because API Gateway drops WebSockets that are idle for 10 minutes. The receiver reconnects after drops.
+- DynamoDB table of connections, discovery listings, code claims and rate-limit counters, with a TTL for records `$disconnect` missed
 
 ## Vega app
 
@@ -114,7 +112,7 @@ The Vega Virtual Device can't run this app because it lacks the WebView 4 module
 vega device start-log-stream   # look for "[tandem] probe-report"
 ```
 
-On a Fire TV Stick (WebView Chromium 144), everything passes. The one warning: the TV's host candidates are mDNS `.local` names only.
+On a Fire TV Stick (WebView Chromium 144), everything passes except one warning, because the TV's host candidates are mDNS `.local` names only.
 
 ## Local validation
 
