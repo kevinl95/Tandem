@@ -54,6 +54,7 @@ class ShareService : Service(), TandemController.Observer {
     override fun onChanged() {
         if (!TandemController.isSharing) {
             TandemController.removeObserver(this)
+            TandemController.disconnectIfIdle()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }

@@ -95,6 +95,24 @@ object TandemController {
         ).also { it.connect() }
     }
 
+    /** Whether the Tandem screen is showing; set by the activity. */
+    var isUiVisible = false
+        set(value) {
+            field = value
+            disconnectIfIdle()
+        }
+
+    // An open connection is billed by the minute, so only hold one while the
+    // app is on screen or sharing.
+    fun disconnectIfIdle() {
+        if (isUiVisible || isSharing) return
+        signaling?.close()
+        signaling = null
+        isConnected = false
+        receivers = emptyList()
+        hasDiscovered = false
+    }
+
     fun discover() {
         if (!isSharing) signaling?.discover()
     }

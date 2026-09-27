@@ -66,19 +66,31 @@ The APK is sideloaded; there's no store listing.
 ## Security
 
 - **TV approval** is enforced by the TV, which never answers a sender its viewer hasn't allowed. Allowed devices are remembered by client id. Devices from another network get a warning, and Decline is focused by default.
+- **Code ownership:** a TV claims its code with a secret it keeps locally; the server stores only a hash and refuses any other receiver presenting that code, so nobody can pose as a TV to receive its shares. Unused codes are released after 90 days.
 - **Code guessing:** offers to codes with no TV behind them count against the source IP. After 10 in 10 minutes, further offers from that IP are refused (`rate-limited`).
 - **Throttling** at the API Gateway stage caps total message rate.
 - Discovery only lists TVs sharing the sender's public IP. Anyone on the same network, including a shared or carrier-grade NAT, can see those TVs, but approval still gates sharing.
+
+## Costs
+
+AWS only relays signaling; media never touches it, so there is no TURN server (it would bill every relayed gigabyte of video). What costs money is open connections and messages. At list prices (US regions, 2026), that's $0.25 per million connection-minutes and $1 per million messages, plus a Lambda invocation and DynamoDB access per relayed message. The design keeps both low:
+
+- The TV disconnects after 15 minutes with nobody sharing and reconnects when OK is pressed. The Android app disconnects when it's in the background and not sharing.
+- Keepalive `ping`s go every 9 minutes, and API Gateway answers them itself through a mock integration, with no Lambda or DynamoDB.
+- Senders refresh discovery every 15 seconds, and only while visible.
+- Failed TV reconnects back off exponentially, up to one minute apart.
+
+**Worst-case ceilings:** the stage throttle (default 200 messages/s, about $520 a month even if saturated), the Lambda's reserved concurrency (default 50) and an optional AWS Budgets alert. For the alert, deploy with `TANDEM_ALERT_EMAIL=you@example.com npm run deploy:signaling`; `TANDEM_BUDGET_USD` sets the monthly amount (default 25). `TANDEM_THROTTLE_RATE` and `TANDEM_THROTTLE_BURST` override the throttle (defaults 200 and 400).
 
 ## AWS signaling stack
 
 The CloudFormation template provisions:
 
-- API Gateway WebSocket API (`$connect`, `$disconnect`, `$default`), auto-deployed and throttled
+- API Gateway WebSocket API (`$connect`, `$disconnect`, `$default`, and a mock `ping` route), auto-deployed and throttled
 - Lambda relay (`infra/lambda/signaling.py`)
 - DynamoDB table of connections, discovery listings and rate-limit counters, with a TTL for records `$disconnect` missed
 
-Clients send a `ping` every 5 minutes, because API Gateway drops WebSockets that are idle for 10 minutes. The receiver reconnects after drops.
+Clients send a `ping` every 9 minutes, because API Gateway drops WebSockets that are idle for 10 minutes. The receiver reconnects after drops.
 
 ## Vega app
 

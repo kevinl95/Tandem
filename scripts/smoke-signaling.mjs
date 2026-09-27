@@ -3,7 +3,7 @@
 // and the wrong-code error.
 // Usage: node scripts/smoke-signaling.mjs [wss://endpoint] (defaults to tandem.config.json)
 import { readFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { generateSessionCode } from "../src/receiver/config.js";
 
 const TIMEOUT_MS = 10000;
@@ -65,7 +65,29 @@ const sessionId = generateSessionCode();
 const tvName = `Smoke TV ${sessionId}`;
 console.log(`Endpoint ${endpoint}, session ${sessionId}`);
 
-const tv = await connect(endpoint, "tv", { name: tvName, role: "receiver", sessionId });
+const tvSecret = randomBytes(32).toString("base64url");
+const tv = await connect(endpoint, "tv", {
+  name: tvName,
+  receiverSecret: tvSecret,
+  role: "receiver",
+  sessionId,
+});
+
+const impostorRefused = await connect(endpoint, "impostor", {
+  name: "Impostor",
+  receiverSecret: randomBytes(32).toString("base64url"),
+  role: "receiver",
+  sessionId,
+}).then(
+  (client) => {
+    client.close();
+    return false;
+  },
+  () => true,
+);
+check(impostorRefused, "another device can't join as a receiver with the TV's code");
+
+tv.send({ type: "ping" });
 const laptop = await connect(endpoint, "laptop", {
   clientId: randomUUID(),
   name: "Smoke laptop",
@@ -77,6 +99,7 @@ const bystander = await connect(endpoint, "bystander", {
   role: "sender",
 });
 
+laptop.send({ type: "ping" });
 laptop.send({ type: "discover" });
 const { receivers } = await laptop.next("receivers");
 check(
@@ -106,7 +129,10 @@ check(ice.senderId === offer.senderId, "TV gets the sender's ICE tagged with its
 tv.send({ type: "ice", candidate: null, to: offer.senderId });
 await laptop.next("ice");
 await new Promise((resolve) => setTimeout(resolve, 1500));
-check(tv.inbox.length === 0 && bystander.inbox.length === 0, "nothing is echoed or leaked to other senders");
+check(
+  tv.inbox.length === 0 && bystander.inbox.length === 0,
+  "pings get no reply, and nothing is echoed or leaked to other senders",
+);
 
 bystander.send({ type: "offer", sdp: "v=0", sessionId: generateSessionCode() });
 const noPeer = await bystander.next("error");

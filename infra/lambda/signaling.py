@@ -12,6 +12,7 @@ This file is the source of truth for the inline Lambda code in
 infra/cloudformation/vega-mirroring.json; run `npm run sync:lambda` after
 editing it.
 """
+import hashlib
 import json
 import logging
 import os
@@ -26,6 +27,10 @@ LOGGER.setLevel(logging.INFO)
 CONNECTION_TTL_SECONDS = 3 * 60 * 60
 SESSION_ID_PATTERN = re.compile(r'^[A-Z0-9]{4,16}$')
 CLIENT_ID_PATTERN = re.compile(r'^[A-Za-z0-9-]{8,64}$')
+RECEIVER_SECRET_PATTERN = re.compile(r'^[A-Za-z0-9_-]{32,128}$')
+# A TV keeps its code while it reconnects at least this often; after that the
+# code can be claimed by another TV.
+CODE_CLAIM_TTL_SECONDS = 90 * 24 * 60 * 60
 MAX_NAME_LENGTH = 40
 # Offers to codes with no TV behind them, per source IP, before refusing more.
 MAX_FAILED_CODE_ATTEMPTS = 10
@@ -87,6 +92,29 @@ def meta_key(connection_id):
 
 def discovery_key(source_ip, connection_id):
     return {'pk': f'ip#{source_ip}', 'sk': f'receiver#{connection_id}'}
+
+
+def claim_code(session_id, secret):
+    """Claims a pairing code for the TV holding secret. Returns False if
+    another TV holds it, so nobody can impersonate a TV by reusing its code."""
+    secret_hash = hashlib.sha256(secret.encode('utf-8')).hexdigest()
+    try:
+        get_table().put_item(
+            Item={
+                'pk': f'code#{session_id}',
+                'sk': 'claim',
+                'secretHash': secret_hash,
+                'expiresAt': int(time.time()) + CODE_CLAIM_TTL_SECONDS,
+            },
+            ConditionExpression='attribute_not_exists(pk) OR secretHash = :hash OR expiresAt < :now',
+            ExpressionAttributeValues={':hash': secret_hash, ':now': int(time.time())},
+        )
+        return True
+    except Exception as error:  # boto3 raises ConditionalCheckFailedException
+        code = getattr(error, 'response', {}).get('Error', {}).get('Code')
+        if code == 'ConditionalCheckFailedException':
+            return False
+        raise
 
 
 def get_connection(connection_id):
@@ -166,8 +194,12 @@ def on_connect(event, connection_id):
 
     if role == 'receiver':
         session_id = normalize_session_id(params.get('sessionId'))
-        if not SESSION_ID_PATTERN.match(session_id):
-            return response(400, 'receivers need a valid sessionId')
+        secret = params.get('receiverSecret') or ''
+        if not SESSION_ID_PATTERN.match(session_id) or not RECEIVER_SECRET_PATTERN.match(secret):
+            return response(400, 'receivers need a valid sessionId and receiverSecret')
+        if not claim_code(session_id, secret):
+            LOGGER.warning('Rejected receiver for code %s: secret mismatch', session_id)
+            return response(403, 'this code belongs to another TV')
 
         name = clean_name(params.get('name'), f'TV {session_id}')
         table.put_item(Item={

@@ -66,6 +66,7 @@ class MainActivity : Activity(), TandemController.Observer {
     override fun onStart() {
         super.onStart()
         TandemController.addObserver(this)
+        TandemController.isUiVisible = true
         TandemController.connect()
         mainHandler.post(discoveryLoop)
         render()
@@ -73,6 +74,9 @@ class MainActivity : Activity(), TandemController.Observer {
 
     override fun onStop() {
         TandemController.removeObserver(this)
+        // Some phones show the capture prompt as a full-screen activity; keep
+        // the connection for the share that's about to start.
+        TandemController.isUiVisible = pendingSessionId != null
         mainHandler.removeCallbacks(discoveryLoop)
         super.onStop()
     }
@@ -185,6 +189,7 @@ class MainActivity : Activity(), TandemController.Observer {
     private companion object {
         const val REQUEST_CAPTURE = 1
         const val REQUEST_AUDIO = 2
-        const val DISCOVERY_INTERVAL_MS = 5000L
+        // Each discovery is a billed round trip; this only runs while visible.
+        const val DISCOVERY_INTERVAL_MS = 15_000L
     }
 }

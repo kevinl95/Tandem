@@ -109,6 +109,12 @@ test("receiver bundle runs without module imports and joins signaling with a sto
     URL,
     URLSearchParams,
     WebSocket: FakeWebSocket,
+    btoa,
+    // Inert timers, so nothing scheduled by the page outlives the test.
+    clearInterval() {},
+    clearTimeout() {},
+    setInterval() {},
+    setTimeout() {},
     console,
     crypto,
     document,
@@ -126,4 +132,6 @@ test("receiver bundle runs without module imports and joins signaling with a sto
   assert.equal(socketUrl.searchParams.get("sessionId"), "K7P2QX");
   assert.equal(socketUrl.searchParams.get("role"), "receiver");
   assert.equal(socketUrl.searchParams.get("name"), "Fire TV K7P2QX");
+  assert.match(socketUrl.searchParams.get("receiverSecret"), /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(storage.get("tandem.receiverSecret"), socketUrl.searchParams.get("receiverSecret"));
 });

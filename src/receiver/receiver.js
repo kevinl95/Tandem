@@ -4,9 +4,13 @@ import {
   prioritizeIceCandidates,
 } from "./config.js";
 
-// API Gateway closes WebSockets that are idle for 10 minutes.
-const KEEPALIVE_INTERVAL_MS = 5 * 60 * 1000;
+// API Gateway closes WebSockets that are idle for 10 minutes. Each ping is a
+// billed message, so send them as rarely as that allows.
+const KEEPALIVE_INTERVAL_MS = 9 * 60 * 1000;
+// Reconnect quickly after a blip, then back off so a TV that can't connect
+// doesn't hammer the (billed) API.
 const RECONNECT_DELAY_MS = 3000;
+const MAX_RECONNECT_DELAY_MS = 60 * 1000;
 // An accepted sender that hasn't connected this long after the answer has failed.
 const CONNECT_TIMEOUT_MS = 30000;
 // Bounds for ICE candidates held for senders the TV hasn't accepted yet.
@@ -34,6 +38,7 @@ export class ScreenMirrorReceiver {
     this.videoElement = videoElement;
     this.runtimeConfig = createReceiverRuntimeConfig(options);
     this.receiverName = options.receiverName ?? "";
+    this.receiverSecret = options.receiverSecret ?? "";
     this.onStateChange = options.onStateChange ?? (() => {});
     this.isTrustedSender = options.isTrustedSender ?? (() => false);
     this.requestApproval = options.requestApproval ?? (async () => false);
@@ -46,6 +51,8 @@ export class ScreenMirrorReceiver {
     this.signalingSocket = null;
     this.keepaliveTimer = null;
     this.reconnectTimer = null;
+    this.reconnectDelay = RECONNECT_DELAY_MS;
+    this.isPaused = false;
     this.connectTimer = null;
   }
 
@@ -54,6 +61,8 @@ export class ScreenMirrorReceiver {
       return null;
     }
 
+    this.isPaused = false;
+    clearTimeout(this.reconnectTimer);
     if (
       this.signalingSocket &&
       this.signalingSocket.readyState !== WebSocket.CLOSED
@@ -64,6 +73,8 @@ export class ScreenMirrorReceiver {
     const signalingUrl = new URL(this.runtimeConfig.signalingEndpoint);
     signalingUrl.searchParams.set("sessionId", this.runtimeConfig.sessionId);
     signalingUrl.searchParams.set("role", "receiver");
+    // Proves this TV owns its code, so another device can't pose as it.
+    signalingUrl.searchParams.set("receiverSecret", this.receiverSecret);
     if (this.receiverName) {
       signalingUrl.searchParams.set("name", this.receiverName);
     }
@@ -73,6 +84,7 @@ export class ScreenMirrorReceiver {
     this.onStateChange("signaling-connecting");
 
     socket.addEventListener("open", () => {
+      this.reconnectDelay = RECONNECT_DELAY_MS;
       this.onStateChange(this.peerConnection ? "streaming" : "waiting");
       clearInterval(this.keepaliveTimer);
       this.keepaliveTimer = setInterval(
@@ -81,20 +93,30 @@ export class ScreenMirrorReceiver {
       );
     });
     socket.addEventListener("close", () => {
-      if (this.signalingSocket !== socket || this.isDisposed) {
+      if (this.signalingSocket !== socket || this.isDisposed || this.isPaused) {
         return;
       }
 
       clearInterval(this.keepaliveTimer);
       this.onStateChange("signaling-closed");
-      this.reconnectTimer = setTimeout(
-        () => this.connectSignaling(),
-        RECONNECT_DELAY_MS,
-      );
+      this.reconnectTimer = setTimeout(() => this.connectSignaling(), this.reconnectDelay);
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
     });
     socket.addEventListener("message", (event) => this.handleSignal(event.data));
 
     return socket;
+  }
+
+  // Disconnects from signaling until connectSignaling() is called again, e.g.
+  // after the TV sat idle, since an open connection is billed by the minute.
+  pauseSignaling() {
+    this.isPaused = true;
+    this.pendingApproval?.controller.abort();
+    clearInterval(this.keepaliveTimer);
+    clearTimeout(this.reconnectTimer);
+    this.signalingSocket?.close();
+    this.signalingSocket = null;
+    this.onStateChange("paused");
   }
 
   async handleSignal(data) {

@@ -3,8 +3,9 @@ import {
   normalizeSessionCode,
 } from "../receiver/config.js";
 
-// API Gateway closes WebSockets that are idle for 10 minutes.
-const KEEPALIVE_INTERVAL_MS = 5 * 60 * 1000;
+// API Gateway closes WebSockets that are idle for 10 minutes. Each ping is a
+// billed message, so send them as rarely as that allows.
+const KEEPALIVE_INTERVAL_MS = 9 * 60 * 1000;
 const RECONNECT_DELAY_MS = 3000;
 // A share that hasn't connected this long after the TV answered has failed.
 const CONNECT_TIMEOUT_MS = 20000;

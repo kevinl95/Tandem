@@ -66,3 +66,23 @@ test("cloudformation template scopes API Gateway invoke permission to the signal
     "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SignalingApi}/${StageName}/*",
   );
 });
+
+test("keepalive pings are answered by API Gateway without invoking Lambda", () => {
+  const route = template.Resources.PingRoute.Properties;
+  const integration = template.Resources.PingIntegration.Properties;
+
+  assert.equal(route.RouteKey, "ping");
+  assert.deepEqual(route.Target["Fn::Join"][1][1], { Ref: "PingIntegration" });
+  assert.equal(integration.IntegrationType, "MOCK");
+  assert.ok(template.Resources.Stage.DependsOn.includes("PingRoute"));
+});
+
+test("cloudformation template bounds spend", () => {
+  assert.deepEqual(
+    template.Resources.SignalingFunction.Properties.ReservedConcurrentExecutions,
+    { Ref: "MaxLambdaConcurrency" },
+  );
+  assert.equal(template.Parameters.ThrottlingRateLimit.Default, 200);
+  assert.equal(template.Resources.SpendBudget.Condition, "HasAlertEmail");
+  assert.equal(template.Parameters.AlertEmail.Default, "");
+});

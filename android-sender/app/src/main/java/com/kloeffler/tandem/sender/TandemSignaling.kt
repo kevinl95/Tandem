@@ -111,8 +111,9 @@ class TandemSignaling(
     }
 
     private companion object {
-        // API Gateway closes WebSockets that are idle for 10 minutes.
-        const val KEEPALIVE_INTERVAL_MS = 5 * 60 * 1000L
+        // API Gateway closes WebSockets that are idle for 10 minutes; each ping
+        // is a billed message, so send them as rarely as that allows.
+        const val KEEPALIVE_INTERVAL_MS = 9 * 60 * 1000L
         const val RECONNECT_DELAY_MS = 3000L
     }
 }

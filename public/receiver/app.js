@@ -3,7 +3,12 @@ import { ScreenMirrorReceiver } from "../../src/receiver/receiver.js";
 
 const SESSION_CODE_STORAGE_KEY = "tandem.sessionCode";
 const TRUSTED_SENDERS_STORAGE_KEY = "tandem.trustedSenders";
+const RECEIVER_SECRET_STORAGE_KEY = "tandem.receiverSecret";
 const APPROVAL_TIMEOUT_MS = 30000;
+// Disconnect after this long with nobody sharing: an open connection is billed
+// by the minute, and TVs are often left on.
+const IDLE_PAUSE_MS = 15 * 60 * 1000;
+const KEY_ENTER = 13;
 // Vega remote keys arrive as these keyCodes in the WebView.
 const KEY_BACK = 27;
 const KEY_LEFT = 37;
@@ -15,6 +20,7 @@ const STATUS_MESSAGES = {
   streaming: "Streaming.",
   "signaling-closed": "Connection lost. Reconnecting…",
   error: "Something went wrong with the last screen share.",
+  paused: "Paused while idle. Press OK on the remote to share again.",
 };
 
 const videoElement = document.querySelector("#receiver-video");
@@ -71,6 +77,26 @@ function loadSessionCode() {
   } catch {
     return generateSessionCode();
   }
+}
+
+// The secret proves to the server that this TV owns its code. It must stay
+// with the code, so both are regenerated together if storage is unavailable.
+function loadReceiverSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const fresh = btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  try {
+    const stored = localStorage.getItem(RECEIVER_SECRET_STORAGE_KEY);
+    if (stored) {
+      return stored;
+    }
+    localStorage.setItem(RECEIVER_SECRET_STORAGE_KEY, fresh);
+  } catch {
+    // Fall through to an unsaved secret.
+  }
+  return fresh;
 }
 
 function isTrustedSender(clientId) {
@@ -158,13 +184,21 @@ function start() {
     return;
   }
 
+  let idleTimer = null;
   const receiver = new ScreenMirrorReceiver(videoElement, {
     ...config,
     isTrustedSender,
     receiverName,
+    receiverSecret: loadReceiverSecret(),
     requestApproval,
     sessionId: sessionCode,
     onStateChange(state, detail) {
+      // Only an idle, connected TV counts down to pausing.
+      clearTimeout(idleTimer);
+      if (state === "waiting") {
+        idleTimer = setTimeout(() => receiver.pauseSignaling(), IDLE_PAUSE_MS);
+      }
+      document.body.classList.toggle("paused", state === "paused");
       document.body.classList.toggle("streaming", state === "streaming");
       setStatus(
         detail ?? STATUS_MESSAGES[state] ?? state,
@@ -172,6 +206,13 @@ function start() {
       );
       console.info(`[tandem-receiver] ${state}${detail ? `: ${detail}` : ""}`);
     },
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (receiver.isPaused && event.keyCode === KEY_ENTER) {
+      event.preventDefault();
+      receiver.connectSignaling();
+    }
   });
 
   receiver.connectSignaling();

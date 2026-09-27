@@ -9,8 +9,15 @@ class FakeTable:
     def __init__(self):
         self.items = {}
 
-    def put_item(self, Item):
-        self.items[(Item['pk'], Item['sk'])] = dict(Item)
+    def put_item(self, Item, ConditionExpression=None, ExpressionAttributeValues=None):
+        key = (Item['pk'], Item['sk'])
+        if ConditionExpression is not None:
+            assert ConditionExpression == 'attribute_not_exists(pk) OR secretHash = :hash OR expiresAt < :now'
+            existing = self.items.get(key)
+            if existing and existing['secretHash'] != ExpressionAttributeValues[':hash'] \
+                    and existing['expiresAt'] >= ExpressionAttributeValues[':now']:
+                raise ConditionalCheckFailed()
+        self.items[key] = dict(Item)
 
     def get_item(self, Key):
         item = self.items.get((Key['pk'], Key['sk']))
@@ -30,6 +37,10 @@ class FakeTable:
         item['attempts'] += ExpressionAttributeValues[':one']
         item['expiresAt'] = ExpressionAttributeValues[':expires']
         return {'Attributes': {'attempts': item['attempts']}}
+
+
+class ConditionalCheckFailed(Exception):
+    response = {'Error': {'Code': 'ConditionalCheckFailedException'}}
 
 
 class GoneException(Exception):
@@ -71,8 +82,13 @@ def connect(connection_id, source_ip=HOME_IP, **params):
     }, None)
 
 
-def connect_tv(connection_id='tv', session_id='K7P2QX', name='Living Room', source_ip=HOME_IP):
-    return connect(connection_id, source_ip, role='receiver', sessionId=session_id, name=name)
+TV_SECRET = 'tv-secret-0123456789abcdefghijklmnop'
+
+
+def connect_tv(connection_id='tv', session_id='K7P2QX', name='Living Room', source_ip=HOME_IP,
+               secret=TV_SECRET):
+    return connect(connection_id, source_ip, role='receiver', sessionId=session_id, name=name,
+                   receiverSecret=secret)
 
 
 def connect_sender(connection_id='laptop', client_id='client-laptop-1', name="Kevin's laptop",
@@ -106,7 +122,30 @@ class SignalingTest(unittest.TestCase):
         self.assertEqual(connect('c1', role='admin')['statusCode'], 400)
         self.assertEqual(connect_tv(session_id='bad code!')['statusCode'], 400)
         self.assertEqual(connect_sender(client_id='short')['statusCode'], 400)
+        self.assertEqual(connect_tv(secret='too-short')['statusCode'], 400)
         self.assertEqual(self.table.items, {})
+
+    def test_a_code_belongs_to_the_tv_that_claimed_it(self):
+        self.assertEqual(connect_tv('tv')['statusCode'], 200)
+
+        impostor = connect_tv('impostor', secret='impostor-secret-0123456789abcdefghij')
+
+        self.assertEqual(impostor['statusCode'], 403)
+        self.assertNotIn(('connection#impostor', 'meta'), self.table.items)
+        self.assertNotIn(('session#K7P2QX', 'connection#impostor'), self.table.items)
+
+    def test_the_owning_tv_can_reconnect_with_its_code(self):
+        connect_tv('tv')
+        disconnect('tv')
+
+        self.assertEqual(connect_tv('tv-again')['statusCode'], 200)
+        self.assertNotIn(TV_SECRET, json.dumps(self.table.items[('code#K7P2QX', 'claim')]))
+
+    def test_an_abandoned_code_can_be_claimed_again(self):
+        connect_tv('tv')
+        self.table.items[('code#K7P2QX', 'claim')]['expiresAt'] = int(time.time()) - 1
+
+        self.assertEqual(connect_tv('new-tv', secret='new-tv-secret-0123456789abcdefghijk')['statusCode'], 200)
 
     def test_receiver_is_listed_for_discovery_under_its_public_ip(self):
         self.assertEqual(connect_tv(session_id=' k7p-2qx ')['statusCode'], 200)

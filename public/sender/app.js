@@ -4,7 +4,8 @@ import { TandemSender, isTerminalShareState } from "../../src/sender/sender.js";
 const ENDPOINT_STORAGE_KEY = "tandem.signalingEndpoint";
 const CLIENT_ID_STORAGE_KEY = "tandem.clientId";
 const DEVICE_NAME_STORAGE_KEY = "tandem.deviceName";
-const DISCOVERY_INTERVAL_MS = 5000;
+// Each discovery is a billed round trip; refresh only while the page is visible.
+const DISCOVERY_INTERVAL_MS = 15000;
 const STATS_INTERVAL_MS = 2000;
 const STATUS_MESSAGES = {
   offering: ["Contacting the TV…"],
@@ -315,7 +316,12 @@ deviceNameInput.value = readStorage(DEVICE_NAME_STORAGE_KEY) || defaultDeviceNam
 endpointInput.value = await loadEndpoint();
 await connect();
 setInterval(() => {
-  if (!isSharing) {
+  if (!isSharing && document.visibilityState === "visible") {
     sender?.discover();
   }
 }, DISCOVERY_INTERVAL_MS);
+document.addEventListener("visibilitychange", () => {
+  if (!isSharing && document.visibilityState === "visible") {
+    sender?.discover();
+  }
+});

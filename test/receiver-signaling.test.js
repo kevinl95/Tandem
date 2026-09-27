@@ -34,6 +34,7 @@ function startReceiver(t, { trusted = [] } = {}) {
     isTrustedSender: (clientId) => trusted.includes(clientId),
     onStateChange: (state, detail) => states.push(detail ? `${state}: ${detail}` : state),
     receiverName: "Living Room",
+    receiverSecret: "tv-secret-0123456789abcdefghijklmnop",
     requestApproval: (request) =>
       new Promise((resolve) => approvals.push({ ...request, resolve })),
     sessionId: "K7P2QX",
@@ -54,6 +55,7 @@ test("receiver joins its session under its display name", (t) => {
   assert.equal(url.searchParams.get("sessionId"), "K7P2QX");
   assert.equal(url.searchParams.get("role"), "receiver");
   assert.equal(url.searchParams.get("name"), "Living Room");
+  assert.equal(url.searchParams.get("receiverSecret"), "tv-secret-0123456789abcdefghijklmnop");
   assert.deepEqual(states, ["signaling-connecting", "waiting"]);
 });
 
@@ -208,23 +210,53 @@ test("receiver gives up on a sender that never connects", async (t) => {
   assert.equal(states.at(-1), "waiting: The connection to the sender timed out.");
 });
 
-test("receiver reconnects signaling after the socket drops", (t) => {
+test("receiver reconnects signaling after drops, backing off while it can't connect", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
   const { socket, states } = startReceiver(t);
 
   socket.close();
   assert.equal(states.at(-1), "signaling-closed");
-
   t.mock.timers.tick(3000);
   assert.equal(FakeWebSocket.instances.length, 2);
   assert.equal(FakeWebSocket.instances[1].url, socket.url);
+
+  // Failed attempts wait 6s, then 12s...
+  FakeWebSocket.instances[1].close();
+  t.mock.timers.tick(5999);
+  assert.equal(FakeWebSocket.instances.length, 2);
+  t.mock.timers.tick(1);
+  assert.equal(FakeWebSocket.instances.length, 3);
+
+  // ...and a successful connection resets the delay.
+  FakeWebSocket.instances[2].open();
+  FakeWebSocket.instances[2].close();
+  t.mock.timers.tick(3000);
+  assert.equal(FakeWebSocket.instances.length, 4);
 });
 
-test("receiver sends keepalive pings while idle", (t) => {
+test("receiver sends keepalive pings just under API Gateway's idle timeout", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
   const { socket } = startReceiver(t);
 
-  t.mock.timers.tick(5 * 60 * 1000);
+  t.mock.timers.tick(9 * 60 * 1000 - 1);
+  assert.deepEqual(socket.sent, []);
+  t.mock.timers.tick(1);
 
   assert.deepEqual(socket.sent, [{ type: "ping" }]);
+});
+
+test("a paused receiver stays disconnected until asked to reconnect", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const { receiver, socket, states } = startReceiver(t);
+
+  receiver.pauseSignaling();
+  assert.equal(socket.readyState, FakeWebSocket.CLOSED);
+  assert.equal(states.at(-1), "paused");
+
+  t.mock.timers.tick(60 * 60 * 1000);
+  assert.equal(FakeWebSocket.instances.length, 1);
+  assert.deepEqual(socket.sent, []);
+
+  receiver.connectSignaling();
+  assert.equal(FakeWebSocket.instances.length, 2);
 });
