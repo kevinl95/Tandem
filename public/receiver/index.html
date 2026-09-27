@@ -80,20 +80,31 @@
         color: #fca5a5;
       }
 
-      #probe-link {
+      #tv-actions {
         bottom: 32px;
-        color: #93c5fd;
-        font-size: 22px;
+        display: flex;
+        gap: 32px;
         position: fixed;
         right: 48px;
       }
 
-      #probe-link:focus {
+      #tv-actions a,
+      #tv-actions button {
+        background: none;
+        border: none;
+        color: #93c5fd;
+        font: inherit;
+        font-size: 22px;
+        padding: 4px;
+      }
+
+      #tv-actions a:focus,
+      #tv-actions button:focus {
         outline: 3px solid #93c5fd;
         outline-offset: 4px;
       }
 
-      body.streaming #probe-link {
+      body.streaming #tv-actions {
         display: none;
       }
 
@@ -102,7 +113,8 @@
         margin: 0 0 16px;
       }
 
-      #approval {
+      #approval,
+      #devices {
         background: rgba(11, 17, 32, 0.94);
         border: 2px solid #374151;
         border-radius: 24px;
@@ -117,11 +129,13 @@
         width: calc(100% - 96px);
       }
 
-      #approval[hidden] {
+      #approval[hidden],
+      #devices[hidden] {
         display: none;
       }
 
-      #approval h2 {
+      #approval h2,
+      #devices h2 {
         font-size: 44px;
         margin: 0 0 16px;
         overflow-wrap: anywhere;
@@ -137,13 +151,15 @@
         color: #fcd34d;
       }
 
-      #approval .actions {
+      #approval .actions,
+      #devices .actions {
         display: flex;
         gap: 32px;
         justify-content: center;
       }
 
-      #approval button {
+      #approval button,
+      #devices button {
         background: #1f2937;
         border: 3px solid transparent;
         border-radius: 16px;
@@ -154,10 +170,46 @@
         padding: 20px 40px;
       }
 
-      #approval button:focus {
+      #approval button:focus,
+      #devices button:focus {
         background: #2563eb;
         border-color: #bfdbfe;
         outline: none;
+      }
+
+      #devices-list {
+        list-style: none;
+        margin: 0 0 32px;
+        max-height: 520px;
+        overflow-y: auto;
+        padding: 0;
+        text-align: left;
+      }
+
+      #devices-list li {
+        align-items: center;
+        border-bottom: 1px solid #374151;
+        display: flex;
+        font-size: 28px;
+        gap: 24px;
+        justify-content: space-between;
+        padding: 12px 0;
+      }
+
+      #devices-list .blocked {
+        color: #fca5a5;
+      }
+
+      #devices-list button {
+        font-size: 24px;
+        min-width: 180px;
+        padding: 12px 24px;
+      }
+
+      #devices-empty {
+        color: #9ca3af;
+        font-size: 28px;
+        margin: 0 0 32px;
       }
     </style>
   </head>
@@ -172,7 +224,10 @@
       <p id="receiver-status" role="status" aria-live="polite">Starting…</p>
     </main>
 
-    <a id="probe-link" href="../probe/">Run WebRTC diagnostics</a>
+    <nav id="tv-actions" aria-label="TV options">
+      <button id="manage-devices" type="button">Allowed devices</button>
+      <a id="probe-link" href="../probe/">Run WebRTC diagnostics</a>
+    </nav>
 
     <section id="approval" role="alertdialog" aria-labelledby="approval-title" aria-describedby="approval-detail" hidden>
       <h2 id="approval-title"></h2>
@@ -180,6 +235,17 @@
       <div class="actions">
         <button id="approval-allow" type="button">Allow</button>
         <button id="approval-decline" type="button">Decline</button>
+        <button id="approval-block" type="button">Block</button>
+      </div>
+    </section>
+
+    <section id="devices" role="dialog" aria-labelledby="devices-title" hidden>
+      <h2 id="devices-title">Allowed devices</h2>
+      <ul id="devices-list"></ul>
+      <p id="devices-empty">No devices have been allowed or blocked yet.</p>
+      <div class="actions">
+        <button id="devices-forget-all" type="button">Forget all</button>
+        <button id="devices-close" type="button">Close</button>
       </div>
     </section>
 

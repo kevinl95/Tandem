@@ -1,18 +1,20 @@
 import { generateSessionCode } from "../../src/receiver/config.js";
+import { createDeviceStore } from "../../src/receiver/devices.js";
 import { ScreenMirrorReceiver } from "../../src/receiver/receiver.js";
 
 const SESSION_CODE_STORAGE_KEY = "tandem.sessionCode";
-const TRUSTED_SENDERS_STORAGE_KEY = "tandem.trustedSenders";
 const RECEIVER_SECRET_STORAGE_KEY = "tandem.receiverSecret";
 const APPROVAL_TIMEOUT_MS = 30000;
 // Disconnect after this long with nobody sharing: an open connection is billed
 // by the minute, and TVs are often left on.
 const IDLE_PAUSE_MS = 15 * 60 * 1000;
-const KEY_ENTER = 13;
 // Vega remote keys arrive as these keyCodes in the WebView.
+const KEY_ENTER = 13;
 const KEY_BACK = 27;
 const KEY_LEFT = 37;
+const KEY_UP = 38;
 const KEY_RIGHT = 39;
+const KEY_DOWN = 40;
 const STATUS_MESSAGES = {
   "signaling-connecting": "Connecting to Tandem…",
   waiting: "Waiting for a screen share.",
@@ -27,11 +29,23 @@ const videoElement = document.querySelector("#receiver-video");
 const receiverNameElement = document.querySelector("#receiver-name");
 const sessionCodeElement = document.querySelector("#session-code");
 const statusElement = document.querySelector("#receiver-status");
+const tvActions = document.querySelector("#tv-actions");
+const manageDevicesButton = document.querySelector("#manage-devices");
 const approvalDialog = document.querySelector("#approval");
 const approvalTitle = document.querySelector("#approval-title");
 const approvalDetail = document.querySelector("#approval-detail");
 const allowButton = document.querySelector("#approval-allow");
 const declineButton = document.querySelector("#approval-decline");
+const blockButton = document.querySelector("#approval-block");
+const devicesDialog = document.querySelector("#devices");
+const devicesList = document.querySelector("#devices-list");
+const devicesEmpty = document.querySelector("#devices-empty");
+const forgetAllButton = document.querySelector("#devices-forget-all");
+const closeDevicesButton = document.querySelector("#devices-close");
+
+const devices = createDeviceStore(globalThis.localStorage);
+// Set while a dialog is open; Back runs it.
+let onBack = null;
 
 // The Vega build injects window.TANDEM_CONFIG; in a desktop browser pass
 // ?signaling=wss://... instead.
@@ -44,22 +58,6 @@ function readConfig() {
     signalingEndpoint: params.get("signaling") ?? injected.signalingEndpoint ?? "",
     stunServerUrl: params.get("stun") ?? injected.stunServerUrl ?? "",
   };
-}
-
-function readJson(key, fallback) {
-  try {
-    return JSON.parse(localStorage.getItem(key)) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJson(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Storage can be unavailable; the TV then asks again next time.
-  }
 }
 
 // Keep the same code across launches so a sender can reconnect without
@@ -99,62 +97,68 @@ function loadReceiverSecret() {
   return fresh;
 }
 
-function isTrustedSender(clientId) {
-  return readJson(TRUSTED_SENDERS_STORAGE_KEY, []).some((sender) => sender.clientId === clientId);
-}
-
-function trustSender(clientId, name) {
-  const trusted = readJson(TRUSTED_SENDERS_STORAGE_KEY, []).filter(
-    (sender) => sender.clientId !== clientId,
-  );
-  writeJson(TRUSTED_SENDERS_STORAGE_KEY, [...trusted, { clientId, name }]);
-}
-
 function setStatus(message, isProblem = false) {
   statusElement.textContent = message;
   statusElement.classList.toggle("problem", isProblem);
 }
 
-// Shows the Allow/Decline prompt and resolves with the viewer's choice.
-// Enter activates the focused button, left/right move between them, and Back
-// declines. The prompt declines by itself if nobody answers.
+// D-pad focus moves between the controls of whatever is on top: an open
+// dialog, or else the TV options row.
+function focusableControls() {
+  const container = !approvalDialog.hidden
+    ? approvalDialog
+    : !devicesDialog.hidden
+      ? devicesDialog
+      : document.body.classList.contains("streaming")
+        ? null
+        : tvActions;
+  return container ? [...container.querySelectorAll("button:not([hidden]), a[href]")] : [];
+}
+
+function moveFocus(step) {
+  const controls = focusableControls();
+  if (controls.length === 0) {
+    return;
+  }
+  const index = controls.indexOf(document.activeElement);
+  const next = index === -1 ? 0 : (index + step + controls.length) % controls.length;
+  controls[next].focus();
+}
+
+// Shows the Allow/Decline/Block prompt and resolves with whether to accept.
+// It declines by itself if nobody answers, or if the sender gives up.
 function requestApproval({ clientId, sameNetwork, senderName, signal }) {
   return new Promise((resolve) => {
     const previousFocus = document.activeElement;
     let timeout;
 
-    function finish(approved) {
+    function finish(choice) {
       clearTimeout(timeout);
-      document.removeEventListener("keydown", onKeyDown, true);
       allowButton.removeEventListener("click", onAllow);
       declineButton.removeEventListener("click", onDecline);
-      signal.removeEventListener("abort", onDecline);
+      blockButton.removeEventListener("click", onBlock);
+      signal.removeEventListener("abort", onAbort);
       approvalDialog.hidden = true;
+      onBack = null;
       previousFocus?.focus?.();
-      if (approved) {
-        trustSender(clientId, senderName);
+
+      if (choice === "allow") {
+        devices.allow(clientId, senderName);
+      } else if (choice === "block") {
+        devices.block(clientId, senderName);
+      } else if (choice === "decline") {
+        devices.noteDeclined(clientId);
       }
-      resolve(approved);
+      resolve(choice === "allow");
     }
 
-    function onAllow() {
-      finish(true);
-    }
+    const onAllow = () => finish("allow");
+    const onDecline = () => finish("decline");
+    const onBlock = () => finish("block");
+    // The sender left or the TV paused; nobody decided anything.
+    const onAbort = () => finish("abort");
 
-    function onDecline() {
-      finish(false);
-    }
-
-    function onKeyDown(event) {
-      if (event.keyCode === KEY_BACK || event.key === "Escape") {
-        event.preventDefault();
-        finish(false);
-      } else if (event.keyCode === KEY_LEFT || event.keyCode === KEY_RIGHT) {
-        event.preventDefault();
-        (document.activeElement === allowButton ? declineButton : allowButton).focus();
-      }
-    }
-
+    devicesDialog.hidden = true;
     approvalTitle.textContent = `${senderName} wants to share its screen`;
     approvalDetail.textContent = sameNetwork
       ? "Allow it? This device will be remembered."
@@ -163,14 +167,68 @@ function requestApproval({ clientId, sameNetwork, senderName, signal }) {
     approvalDialog.hidden = false;
     // Default to the safe choice for devices from elsewhere.
     (sameNetwork ? allowButton : declineButton).focus();
+    onBack = onDecline;
 
-    document.addEventListener("keydown", onKeyDown, true);
     allowButton.addEventListener("click", onAllow);
     declineButton.addEventListener("click", onDecline);
-    signal.addEventListener("abort", onDecline);
+    blockButton.addEventListener("click", onBlock);
+    signal.addEventListener("abort", onAbort);
     timeout = setTimeout(onDecline, APPROVAL_TIMEOUT_MS);
   });
 }
+
+function renderDevices() {
+  const { allowed, blocked } = devices.list();
+  const rows = [
+    ...allowed.map((device) => ({ ...device, action: "Forget", isBlocked: false })),
+    ...blocked.map((device) => ({ ...device, action: "Unblock", isBlocked: true })),
+  ];
+
+  devicesList.replaceChildren(
+    ...rows.map(({ action, clientId, isBlocked, name }) => {
+      const label = document.createElement("span");
+      label.textContent = isBlocked ? `${name} (blocked)` : name;
+      label.classList.toggle("blocked", isBlocked);
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = action;
+      button.setAttribute("aria-label", `${action} ${name}`);
+      button.addEventListener("click", () => {
+        devices.forget(clientId);
+        renderDevices();
+        moveFocus(0);
+      });
+
+      const item = document.createElement("li");
+      item.append(label, button);
+      return item;
+    }),
+  );
+  devicesEmpty.hidden = rows.length > 0;
+  forgetAllButton.hidden = rows.length === 0;
+}
+
+function openDevices() {
+  renderDevices();
+  devicesDialog.hidden = false;
+  onBack = closeDevices;
+  focusableControls()[0]?.focus();
+}
+
+function closeDevices() {
+  devicesDialog.hidden = true;
+  onBack = null;
+  manageDevicesButton.focus();
+}
+
+manageDevicesButton.addEventListener("click", openDevices);
+closeDevicesButton.addEventListener("click", closeDevices);
+forgetAllButton.addEventListener("click", () => {
+  devices.forgetAll();
+  renderDevices();
+  closeDevicesButton.focus();
+});
 
 function start() {
   const config = readConfig();
@@ -187,7 +245,8 @@ function start() {
   let idleTimer = null;
   const receiver = new ScreenMirrorReceiver(videoElement, {
     ...config,
-    isTrustedSender,
+    isBlockedSender: (clientId) => devices.isBlocked(clientId),
+    isTrustedSender: (clientId) => devices.isTrusted(clientId),
     receiverName,
     receiverSecret: loadReceiverSecret(),
     requestApproval,
@@ -212,6 +271,15 @@ function start() {
     if (receiver.isPaused && event.keyCode === KEY_ENTER) {
       event.preventDefault();
       receiver.connectSignaling();
+    } else if ((event.keyCode === KEY_BACK || event.key === "Escape") && onBack) {
+      event.preventDefault();
+      onBack();
+    } else if (event.keyCode === KEY_LEFT || event.keyCode === KEY_UP) {
+      event.preventDefault();
+      moveFocus(-1);
+    } else if (event.keyCode === KEY_RIGHT || event.keyCode === KEY_DOWN) {
+      event.preventDefault();
+      moveFocus(1);
     }
   });
 

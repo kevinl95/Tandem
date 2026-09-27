@@ -65,9 +65,10 @@ The APK is sideloaded; there's no store listing.
 
 ## Security
 
-- **TV approval** is enforced by the TV, which never answers a sender its viewer hasn't allowed. Allowed devices are remembered by client id. Devices from another network get a warning, and Decline is focused by default.
+- **TV approval** is enforced by the TV, which never answers a sender its viewer hasn't allowed. The prompt offers Allow, Decline and Block. Allowed devices are remembered by client id; blocked devices are declined silently, and a declined device can't prompt again for a minute. Devices from another network get a warning, and Decline is focused by default.
+- **Allowed devices** on the TV's pairing screen lists allowed and blocked devices, with Forget or Unblock for each and Forget all.
 - **Code ownership:** a TV claims its code with a secret it keeps locally; the server stores only a hash and refuses any other receiver presenting that code, so nobody can pose as a TV to receive its shares. Unused codes are released after 90 days.
-- **Code guessing:** offers to codes with no TV behind them count against the source IP. After 10 in 10 minutes, further offers from that IP are refused (`rate-limited`).
+- **Rate limits per source IP**, over 10-minute windows: 10 offers to codes with no TV behind them (guessing), and 30 offers of any kind (prompt spam, even with fresh client ids). Past either limit, offers from that IP are refused (`rate-limited`).
 - **Throttling** at the API Gateway stage caps total message rate.
 - Discovery only lists TVs sharing the sender's public IP. Anyone on the same network, including a shared or carrier-grade NAT, can see those TVs, but approval still gates sharing.
 

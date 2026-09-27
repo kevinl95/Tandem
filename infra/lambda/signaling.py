@@ -32,9 +32,12 @@ RECEIVER_SECRET_PATTERN = re.compile(r'^[A-Za-z0-9_-]{32,128}$')
 # code can be claimed by another TV.
 CODE_CLAIM_TTL_SECONDS = 90 * 24 * 60 * 60
 MAX_NAME_LENGTH = 40
-# Offers to codes with no TV behind them, per source IP, before refusing more.
+# Per source IP and window: offers to codes with no TV behind them (guessing),
+# and offers of any kind (spamming a TV with prompts). A household sharing a
+# public IP stays far below both.
+RATE_WINDOW_SECONDS = 10 * 60
 MAX_FAILED_CODE_ATTEMPTS = 10
-FAILED_ATTEMPT_WINDOW_SECONDS = 10 * 60
+MAX_OFFERS = 30
 ALLOWED_MESSAGES = {
     'receiver': {'answer', 'decline', 'ice', 'pending', 'ping'},
     'sender': {'discover', 'offer', 'ice', 'ping'},
@@ -162,27 +165,27 @@ def post_to_connection(request_context, connection_id, payload):
         return False
 
 
-def record_failed_code_attempt(source_ip):
-    """Counts an offer to a code with no TV; returns the count in this window."""
-    window = int(time.time()) // FAILED_ATTEMPT_WINDOW_SECONDS
+def rate_key(kind, source_ip):
+    window = int(time.time()) // RATE_WINDOW_SECONDS
+    return {'pk': f'rate#{source_ip}', 'sk': f'{kind}#{window}'}, (window + 1) * RATE_WINDOW_SECONDS
+
+
+def count_event(kind, source_ip):
+    """Counts one event of kind for source_ip; returns the count in this window."""
+    key, expires_at = rate_key(kind, source_ip)
     result = get_table().update_item(
-        Key={'pk': f'rate#{source_ip}', 'sk': f'window#{window}'},
+        Key=key,
         UpdateExpression='ADD attempts :one SET expiresAt = :expires',
-        ExpressionAttributeValues={
-            ':one': 1,
-            ':expires': (window + 1) * FAILED_ATTEMPT_WINDOW_SECONDS,
-        },
+        ExpressionAttributeValues={':one': 1, ':expires': expires_at},
         ReturnValues='UPDATED_NEW',
     )
     return int(result['Attributes']['attempts'])
 
 
-def is_rate_limited(source_ip):
-    window = int(time.time()) // FAILED_ATTEMPT_WINDOW_SECONDS
-    item = get_table().get_item(
-        Key={'pk': f'rate#{source_ip}', 'sk': f'window#{window}'},
-    ).get('Item')
-    return bool(item) and int(item.get('attempts', 0)) >= MAX_FAILED_CODE_ATTEMPTS
+def event_count(kind, source_ip):
+    key, _ = rate_key(kind, source_ip)
+    item = get_table().get_item(Key=key).get('Item')
+    return int(item.get('attempts', 0)) if item else 0
 
 
 def on_connect(event, connection_id):
@@ -280,7 +283,8 @@ def handle_offer(request_context, connection_id, connection, message):
     if not SESSION_ID_PATTERN.match(session_id):
         return response(400, 'offer needs a valid sessionId')
 
-    if is_rate_limited(source_ip):
+    if (event_count('wrong-code', source_ip) >= MAX_FAILED_CODE_ATTEMPTS
+            or count_event('offer', source_ip) > MAX_OFFERS):
         post_to_connection(request_context, connection_id, {
             'type': 'error', 'reason': 'rate-limited', 'sessionId': session_id,
         })
@@ -288,7 +292,7 @@ def handle_offer(request_context, connection_id, connection, message):
 
     receivers = session_members(session_id, 'receiver')
     if not receivers:
-        record_failed_code_attempt(source_ip)
+        count_event('wrong-code', source_ip)
         post_to_connection(request_context, connection_id, {
             'type': 'error', 'reason': 'no-peer', 'sessionId': session_id,
         })

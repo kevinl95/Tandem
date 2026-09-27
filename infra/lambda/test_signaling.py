@@ -240,6 +240,35 @@ class SignalingTest(unittest.TestCase):
         self.assertEqual(self.client.posts_to('tv'), [])
         self.assertEqual(self.client.posts_to('laptop')[-1]['reason'], 'rate-limited')
 
+    def test_repeated_offers_are_rate_limited_per_ip(self):
+        connect_tv()
+        connect_sender()
+        for _ in range(signaling.MAX_OFFERS):
+            send('laptop', {'type': 'offer', 'sdp': 'v=0', 'sessionId': 'K7P2QX'})
+        self.assertEqual(len(self.client.posts_to('tv')), signaling.MAX_OFFERS)
+
+        # A fresh client id on the same network doesn't reset the limit.
+        connect_sender('spammer', client_id='client-spammer-2')
+        result = send('spammer', {'type': 'offer', 'sdp': 'v=0', 'sessionId': 'K7P2QX'})
+
+        self.assertEqual(result['statusCode'], 429)
+        self.assertEqual(len(self.client.posts_to('tv')), signaling.MAX_OFFERS)
+        self.assertEqual(self.client.posts_to('spammer')[-1]['reason'], 'rate-limited')
+
+    def test_offer_limits_are_per_ip(self):
+        connect_tv()
+        connect_sender()
+        for _ in range(signaling.MAX_OFFERS + 1):
+            send('laptop', {'type': 'offer', 'sdp': 'v=0', 'sessionId': 'K7P2QX'})
+        connect_sender('elsewhere', source_ip=OTHER_IP)
+
+        signaling.handler({
+            'requestContext': request_context('elsewhere', '$default', OTHER_IP),
+            'body': json.dumps({'type': 'offer', 'sdp': 'v=0', 'sessionId': 'K7P2QX'}),
+        }, None)
+
+        self.assertEqual(self.client.posts_to('tv')[-1]['senderId'], 'elsewhere')
+
     def test_offer_rebinds_the_sender_to_a_new_tv(self):
         connect_tv('tv1', session_id='AAAA11')
         connect_tv('tv2', session_id='BBBB22')

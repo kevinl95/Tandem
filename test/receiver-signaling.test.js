@@ -25,12 +25,13 @@ function offerFrom(senderId, overrides = {}) {
 }
 
 // requestApproval calls are captured so tests can answer them.
-function startReceiver(t, { trusted = [] } = {}) {
+function startReceiver(t, { trusted = [], blocked = [] } = {}) {
   installFakes(t);
   const states = [];
   const approvals = [];
   const video = { srcObject: null };
   const receiver = new ScreenMirrorReceiver(video, {
+    isBlockedSender: (clientId) => blocked.includes(clientId),
     isTrustedSender: (clientId) => trusted.includes(clientId),
     onStateChange: (state, detail) => states.push(detail ? `${state}: ${detail}` : state),
     receiverName: "Living Room",
@@ -100,6 +101,21 @@ test("receiver declines when the viewer says no, and never creates a connection"
 
   assert.deepEqual(socket.sent.at(-1), { to: "laptop", type: "decline" });
   assert.equal(FakePeerConnection.instances.length, 0);
+});
+
+test("receiver declines blocked senders without asking, even if once trusted", async (t) => {
+  const { approvals, socket } = startReceiver(t, {
+    blocked: ["client-laptop"],
+    trusted: ["client-laptop"],
+  });
+
+  socket.receive({ candidate: hostCandidate, senderId: "laptop", type: "ice" });
+  socket.receive(offerFrom("laptop"));
+  await flushAsync();
+
+  assert.equal(approvals.length, 0);
+  assert.equal(FakePeerConnection.instances.length, 0);
+  assert.deepEqual(socket.sent, [{ to: "laptop", type: "decline" }]);
 });
 
 test("receiver turns away a second unknown sender while a prompt is open", async (t) => {

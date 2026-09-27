@@ -27,6 +27,7 @@ function isEndOfCandidates(candidate) {
 //
 // Offers from senders that isTrustedSender() doesn't recognize go through
 // requestApproval(), which the page implements (e.g. an Allow/Decline prompt).
+// Senders isBlockedSender() matches are declined without asking.
 // The TV only answers approved senders, so approval is enforced here, not by
 // the signaling server.
 export class ScreenMirrorReceiver {
@@ -41,6 +42,7 @@ export class ScreenMirrorReceiver {
     this.receiverSecret = options.receiverSecret ?? "";
     this.onStateChange = options.onStateChange ?? (() => {});
     this.isTrustedSender = options.isTrustedSender ?? (() => false);
+    this.isBlockedSender = options.isBlockedSender ?? (() => false);
     this.requestApproval = options.requestApproval ?? (async () => false);
     this.isDisposed = false;
     this.isFlushingRemoteCandidates = false;
@@ -145,6 +147,12 @@ export class ScreenMirrorReceiver {
     clientId = "",
     sameNetwork = true,
   }) {
+    if (this.isBlockedSender(clientId)) {
+      this.bufferedCandidates.delete(senderId);
+      this.sendSignal({ to: senderId, type: "decline" });
+      return;
+    }
+
     if (!this.isTrustedSender(clientId)) {
       if (this.pendingApproval) {
         this.sendSignal({ reason: "busy", to: senderId, type: "decline" });

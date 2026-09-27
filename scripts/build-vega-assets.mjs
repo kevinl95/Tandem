@@ -14,6 +14,7 @@ export const RECEIVER_BUNDLE_NAME = "tandem-receiver.js";
 // Dependency order: each module may only reference modules listed before it.
 const RECEIVER_MODULES = [
   "src/receiver/config.js",
+  "src/receiver/devices.js",
   "src/receiver/receiver.js",
   "public/receiver/app.js",
 ];
