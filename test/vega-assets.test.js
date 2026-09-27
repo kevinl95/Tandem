@@ -88,9 +88,17 @@ test("receiver bundle runs without module imports and joins signaling with a sto
   }
 
   const document = {
+    activeElement: null,
+    addEventListener() {},
     body: { classList: { toggle() {} } },
     querySelector(selector) {
-      elements[selector] ??= { classList: { toggle() {} }, textContent: "" };
+      elements[selector] ??= {
+        addEventListener() {},
+        classList: { toggle() {} },
+        focus() {},
+        hidden: true,
+        textContent: "",
+      };
       return elements[selector];
     },
   };
@@ -112,8 +120,10 @@ test("receiver bundle runs without module imports and joins signaling with a sto
   });
 
   assert.equal(elements["#session-code"].textContent, "K7P2QX");
+  assert.equal(elements["#receiver-name"].textContent, "Fire TV K7P2QX");
   assert.equal(sockets.length, 1);
   const socketUrl = new URL(sockets[0].url);
   assert.equal(socketUrl.searchParams.get("sessionId"), "K7P2QX");
   assert.equal(socketUrl.searchParams.get("role"), "receiver");
+  assert.equal(socketUrl.searchParams.get("name"), "Fire TV K7P2QX");
 });

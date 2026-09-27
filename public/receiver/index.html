@@ -91,6 +91,69 @@
       body.streaming #probe-link {
         display: none;
       }
+
+      #receiver-name {
+        font-size: 36px;
+        margin: 0 0 16px;
+      }
+
+      #approval {
+        background: rgba(11, 17, 32, 0.94);
+        border: 2px solid #374151;
+        border-radius: 24px;
+        box-sizing: border-box;
+        left: 50%;
+        max-width: 1100px;
+        padding: 48px 56px;
+        position: fixed;
+        text-align: center;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: calc(100% - 96px);
+      }
+
+      #approval[hidden] {
+        display: none;
+      }
+
+      #approval h2 {
+        font-size: 44px;
+        margin: 0 0 16px;
+        overflow-wrap: anywhere;
+      }
+
+      #approval p {
+        color: #d1d5db;
+        font-size: 28px;
+        margin: 0 0 40px;
+      }
+
+      #approval p.warning {
+        color: #fcd34d;
+      }
+
+      #approval .actions {
+        display: flex;
+        gap: 32px;
+        justify-content: center;
+      }
+
+      #approval button {
+        background: #1f2937;
+        border: 3px solid transparent;
+        border-radius: 16px;
+        color: #f9fafb;
+        font: inherit;
+        font-size: 32px;
+        min-width: 240px;
+        padding: 20px 40px;
+      }
+
+      #approval button:focus {
+        background: #2563eb;
+        border-color: #bfdbfe;
+        outline: none;
+      }
     </style>
   </head>
   <body>
@@ -98,12 +161,22 @@
 
     <main id="pairing">
       <h1>TANDEM</h1>
-      <p id="instructions">To share your screen, open the Tandem sender and enter</p>
+      <p id="receiver-name"></p>
+      <p id="instructions">On a device on this WiFi, open Tandem and pick this TV, or enter</p>
       <p id="session-code" aria-label="Pairing code">······</p>
       <p id="receiver-status" role="status" aria-live="polite">Starting…</p>
     </main>
 
     <a id="probe-link" href="../probe/">Run WebRTC diagnostics</a>
+
+    <section id="approval" role="alertdialog" aria-labelledby="approval-title" aria-describedby="approval-detail" hidden>
+      <h2 id="approval-title"></h2>
+      <p id="approval-detail"></p>
+      <div class="actions">
+        <button id="approval-allow" type="button">Allow</button>
+        <button id="approval-decline" type="button">Decline</button>
+      </div>
+    </section>
 
     <script type="module" src="./app.js"></script>
   </body>

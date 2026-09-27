@@ -4,12 +4,14 @@ Tandem mirrors a screen to an Amazon Vega Fire TV over the local network:
 
 - **Sender → WebRTC → Vega receiver**, with media flowing directly over the LAN
 - **AWS signaling** (API Gateway WebSocket, Lambda, DynamoDB) only relays offers, answers and ICE candidates
-- **Pairing by code**: the TV shows a six-character code that the sender enters
+- **Discovery**: senders list the TVs that share their public IP (same WiFi), with the TV's six-character code as a fallback
+- **Approval on the TV**: a device's first share needs Allow on the TV; the TV remembers allowed devices
 
 ## Repository layout
 
 - `/public/receiver` – TV receiver page (pairing code, full-screen video)
 - `/public/sender` – desktop browser sender page
+- `/android-sender` – Android sender app (MediaProjection + WebRTC), sideloaded as an APK
 - `/public/probe` – WebRTC capability probe
 - `/src/receiver`, `/src/sender` – WebRTC and signaling logic
 - `/infra/lambda/signaling.py` – signaling Lambda (source of truth, with unit tests)
@@ -19,11 +21,14 @@ Tandem mirrors a screen to an Amazon Vega Fire TV over the local network:
 
 ## Flow
 
-1. The TV app shows a pairing code (kept across launches) and joins that session as `receiver`.
-2. The sender enters the code, captures the screen, joins as `sender` and sends an offer.
-3. The Lambda relays messages only between the sender and receiver in the same session. Session and role come from the connection record, never from the message.
-4. The TV answers, both sides trickle ICE candidates, and video flows directly over the LAN.
-5. When either side leaves, the other gets `peer-left`. The TV goes back to showing its code.
+1. The TV app joins as `receiver` with its pairing code (kept across launches) and a display name. The server lists it under the TV's public IP.
+2. A sender connects as `sender` with a stable client id and a name, and sends `discover`. It gets back the TVs on the same public IP.
+3. The sender captures the screen and sends an `offer` naming the TV's code. The server binds the sender to that session and forwards the offer to the TV. The server adds the sender's verified name, client id and a `sameNetwork` flag.
+4. If the TV hasn't allowed this client id before, it replies `pending` and asks its viewer to Allow or Decline. It only answers allowed senders.
+5. The TV's `answer` and ICE go only to the sender it names (`to`). Media flows directly over the LAN.
+6. When either side leaves, the other gets `peer-left`. The TV goes back to showing its code.
+
+Session, role and sender identity always come from the server's connection records, never from message fields.
 
 ## Try it end to end
 
@@ -40,7 +45,30 @@ cd .. && python3 -m http.server 8080
 
 The sender page reads the endpoint from `tandem.config.json` and shows the selected ICE path, resolution, frame rate, codec and bitrate while sharing.
 
-Mobile browsers can't capture the screen, so phones will need a native sender app.
+Mobile browsers can't capture the screen (`getDisplayMedia` isn't supported on Chrome for Android or iOS Safari), so phones use the Android app below.
+
+## Android sender
+
+`/android-sender` is a small Kotlin app. It lists TVs on the WiFi and shares the screen through a `mediaProjection` foreground service. The build bakes in the signaling endpoint from `tandem.config.json`. It needs a full JDK 17 or newer (a JRE isn't enough) and the Android SDK.
+
+```bash
+cd android-sender
+JAVA_HOME=/path/to/jdk-21 ./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+The APK is sideloaded; there's no store listing.
+
+**Audio** (Android 10+): the app sends the phone's media playback, using Android playback capture. Calls, notifications and apps that opt out of capture (typically DRM streaming apps) aren't included. WebRTC's Android audio pipeline is paced by a microphone recorder, so the app needs the microphone permission and shows the mic indicator while sharing. It overwrites every recorded buffer with playback audio or silence, so microphone audio is never sent. If the permission is denied, sharing continues video-only. This relies on `stream-webrtc-android` 1.1.3; later releases no longer call the record-data callback.
+
+**VPNs:** a phone on a VPN reaches AWS from the VPN's IP, so TVs on its WiFi aren't listed (enter the code instead). An always-on VPN that blocks non-VPN traffic also blocks the direct LAN connection to the TV, and the share fails. Allow local network (LAN) access in the VPN app, or exclude Tandem from the tunnel. The app shows a hint when a VPN is active.
+
+## Security
+
+- **TV approval** is enforced by the TV, which never answers a sender its viewer hasn't allowed. Allowed devices are remembered by client id. Devices from another network get a warning, and Decline is focused by default.
+- **Code guessing:** offers to codes with no TV behind them count against the source IP. After 10 in 10 minutes, further offers from that IP are refused (`rate-limited`).
+- **Throttling** at the API Gateway stage caps total message rate.
+- Discovery only lists TVs sharing the sender's public IP. Anyone on the same network, including a shared or carrier-grade NAT, can see those TVs, but approval still gates sharing.
 
 ## AWS signaling stack
 
@@ -48,7 +76,7 @@ The CloudFormation template provisions:
 
 - API Gateway WebSocket API (`$connect`, `$disconnect`, `$default`), auto-deployed and throttled
 - Lambda relay (`infra/lambda/signaling.py`)
-- DynamoDB table of connections, with a TTL for records `$disconnect` missed
+- DynamoDB table of connections, discovery listings and rate-limit counters, with a TTL for records `$disconnect` missed
 
 Clients send a `ping` every 5 minutes, because API Gateway drops WebSockets that are idle for 10 minutes. The receiver reconnects after drops.
 

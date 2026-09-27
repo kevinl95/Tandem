@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tandem</string>
+    <string name="tvs_heading">TVs on your network</string>
+    <string name="looking_for_tvs">Looking for TVs…</string>
+    <string name="no_tvs">No TVs found on this WiFi yet. Open Tandem on the TV, or enter its code below.</string>
+    <string name="not_configured">This build has no signaling endpoint. Run npm run deploy:signaling, then rebuild.</string>
+    <string name="code_label">Or enter the code shown on the TV</string>
+    <string name="code_hint">Type the TV\'s code</string>
+    <string name="share">Share</string>
+    <string name="tv_button">%1$s  ·  %2$s</string>
+    <string name="stop_sharing">Stop sharing</string>
+    <string name="enter_code">Enter the 6-character code shown on the TV.</string>
+    <string name="capture_denied">Screen capture was not started.</string>
+    <string name="notification_channel">Screen sharing</string>
+    <string name="notification_title">Sharing your screen to a TV</string>
+    <string name="notification_text">Tap Stop to end sharing.</string>
+    <string name="state_offering">Contacting the TV…</string>
+    <string name="state_awaiting_approval">Waiting for someone to press Allow on the TV…</string>
+    <string name="state_connecting">Connecting to the TV…</string>
+    <string name="state_streaming">Sharing your screen.</string>
+    <string name="state_declined">The TV declined the share.</string>
+    <string name="state_no_receiver">No TV is showing that code. Check the code on the TV.</string>
+    <string name="state_rate_limited">Too many wrong codes from this network. Try again in a few minutes.</string>
+    <string name="state_receiver_left">The TV stopped receiving.</string>
+    <string name="state_failed">Could not connect to the TV. Are you on the same WiFi?</string>
+    <string name="state_failed_vpn">Could not reach the TV. Your VPN is probably blocking devices on your WiFi: allow local network (LAN) access in your VPN app, or exclude Tandem from it.</string>
+    <string name="vpn_hint">A VPN is on. TVs on your WiFi may not be listed, and your VPN may block the connection. Allow local network access in your VPN app, or enter the TV\'s code.</string>
+    <string name="state_stopped">Stopped sharing.</string>
+</resources>

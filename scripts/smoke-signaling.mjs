@@ -1,7 +1,9 @@
-// End-to-end check of a deployed signaling stack: a fake receiver and sender
-// exchange an offer, answer and ICE candidate, and nothing is echoed back.
+// End-to-end check of a deployed signaling stack with fake clients: discovery,
+// an approved share (offer, pending, answer, ICE), targeted replies, departures
+// and the wrong-code error.
 // Usage: node scripts/smoke-signaling.mjs [wss://endpoint] (defaults to tandem.config.json)
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { generateSessionCode } from "../src/receiver/config.js";
 
 const TIMEOUT_MS = 10000;
@@ -16,19 +18,15 @@ async function loadEndpoint() {
   return config.signalingEndpoint;
 }
 
-function connect(endpoint, sessionId, role) {
+function connect(endpoint, label, params) {
   const url = new URL(endpoint);
-  url.searchParams.set("sessionId", sessionId);
-  url.searchParams.set("role", role);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
 
   const socket = new WebSocket(url);
   const inbox = [];
-  const waiters = [];
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(event.data);
-    inbox.push(message);
-    waiters.splice(0).forEach((waiter) => waiter());
-  });
+  socket.addEventListener("message", (event) => inbox.push(JSON.parse(event.data)));
 
   const client = {
     inbox,
@@ -42,63 +40,82 @@ function connect(endpoint, sessionId, role) {
           return inbox.splice(index, 1)[0];
         }
         if (Date.now() > deadline) {
-          throw new Error(`${role} did not receive "${type}" within ${TIMEOUT_MS}ms`);
+          throw new Error(`${label} did not receive "${type}" within ${TIMEOUT_MS}ms`);
         }
-        await new Promise((resolve) => {
-          waiters.push(resolve);
-          setTimeout(resolve, 250);
-        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     },
   };
 
   return new Promise((resolve, reject) => {
     socket.addEventListener("open", () => resolve(client));
-    socket.addEventListener("error", () => reject(new Error(`${role} could not connect`)));
+    socket.addEventListener("error", () => reject(new Error(`${label} could not connect`)));
   });
 }
 
 function check(condition, message) {
   if (!condition) {
-    throw new Error(message);
+    throw new Error(`not ok - ${message}`);
   }
   console.log(`ok - ${message}`);
 }
 
 const endpoint = await loadEndpoint();
 const sessionId = generateSessionCode();
+const tvName = `Smoke TV ${sessionId}`;
 console.log(`Endpoint ${endpoint}, session ${sessionId}`);
 
-const lonelySender = await connect(endpoint, generateSessionCode(), "sender");
-lonelySender.send({ type: "offer", sdp: "v=0" });
-const noPeer = await lonelySender.next("error");
-check(noPeer.reason === "no-peer", "offer to an unused code reports no-peer");
-lonelySender.close();
+const tv = await connect(endpoint, "tv", { name: tvName, role: "receiver", sessionId });
+const laptop = await connect(endpoint, "laptop", {
+  clientId: randomUUID(),
+  name: "Smoke laptop",
+  role: "sender",
+});
+const bystander = await connect(endpoint, "bystander", {
+  clientId: randomUUID(),
+  name: "Smoke bystander",
+  role: "sender",
+});
 
-const receiver = await connect(endpoint, sessionId, "receiver");
-const sender = await connect(endpoint, sessionId, "sender");
+laptop.send({ type: "discover" });
+const { receivers } = await laptop.next("receivers");
+check(
+  receivers.some((receiver) => receiver.sessionId === sessionId && receiver.name === tvName),
+  "sender discovers the TV on its network",
+);
 
-sender.send({ type: "offer", sdp: "v=0 offer", sessionId: "SPOOFED" });
-const offer = await receiver.next("offer");
-check(offer.sdp === "v=0 offer" && offer.sessionId === sessionId, "receiver gets the offer with the server's session id");
+laptop.send({ type: "offer", sdp: "v=0 offer", sessionId: sessionId.toLowerCase() });
+const offer = await tv.next("offer");
+check(
+  offer.sdp === "v=0 offer" && offer.senderName === "Smoke laptop" && offer.sameNetwork === true,
+  "TV gets the offer with the sender's verified name and network",
+);
 
-receiver.send({ type: "answer", sdp: "v=0 answer" });
-const answer = await sender.next("answer");
-check(answer.sdp === "v=0 answer" && answer.from === "receiver", "sender gets the answer");
+tv.send({ type: "pending", to: offer.senderId });
+await laptop.next("pending");
+check(true, "sender hears that the TV is asking for approval");
 
-receiver.send({ type: "ice", candidate: null });
-await sender.next("ice");
-check(true, "sender gets the receiver's ICE candidate");
+tv.send({ type: "answer", sdp: "v=0 answer", to: offer.senderId });
+const answer = await laptop.next("answer");
+check(answer.sdp === "v=0 answer" && answer.sessionId === sessionId, "sender gets the answer");
 
-receiver.send({ type: "offer", sdp: "v=0" });
-receiver.send({ type: "ping" });
+laptop.send({ type: "ice", candidate: null });
+const ice = await tv.next("ice");
+check(ice.senderId === offer.senderId, "TV gets the sender's ICE tagged with its id");
+
+tv.send({ type: "ice", candidate: null, to: offer.senderId });
+await laptop.next("ice");
 await new Promise((resolve) => setTimeout(resolve, 1500));
-check(receiver.inbox.length === 0, "receiver's own messages are not echoed back to it");
-check(!sender.inbox.some((message) => message.type === "offer"), "a receiver cannot send offers");
+check(tv.inbox.length === 0 && bystander.inbox.length === 0, "nothing is echoed or leaked to other senders");
 
-sender.close();
-const left = await receiver.next("peer-left");
-check(left.from === "sender", "receiver is told when the sender leaves");
-receiver.close();
+bystander.send({ type: "offer", sdp: "v=0", sessionId: generateSessionCode() });
+const noPeer = await bystander.next("error");
+check(noPeer.reason === "no-peer", "an offer to an unused code reports no-peer");
 
+laptop.close();
+const left = await tv.next("peer-left");
+check(left.senderId === offer.senderId, "TV is told which sender left");
+
+tv.close();
+bystander.close();
 console.log("Signaling smoke test passed.");

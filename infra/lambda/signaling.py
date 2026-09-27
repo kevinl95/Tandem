@@ -1,7 +1,12 @@
 """WebSocket signaling for Tandem.
 
-Relays offers, answers and ICE candidates between the receiver (TV) and the
-sender in a session. Media never passes through AWS.
+Relays offers, answers and ICE candidates between a receiver (TV) and the
+senders that want to share to it. Media never passes through AWS.
+
+Receivers join with their pairing code and a display name, and are listed for
+discovery under their public IP, so senders on the same network can find them
+without typing the code. Senders connect without a session and bind to one by
+sending an offer to its code. The TV decides whether to accept each sender.
 
 This file is the source of truth for the inline Lambda code in
 infra/cloudformation/vega-mirroring.json; run `npm run sync:lambda` after
@@ -20,9 +25,14 @@ LOGGER.setLevel(logging.INFO)
 # than this is stale even if $disconnect never ran.
 CONNECTION_TTL_SECONDS = 3 * 60 * 60
 SESSION_ID_PATTERN = re.compile(r'^[A-Z0-9]{4,16}$')
+CLIENT_ID_PATTERN = re.compile(r'^[A-Za-z0-9-]{8,64}$')
+MAX_NAME_LENGTH = 40
+# Offers to codes with no TV behind them, per source IP, before refusing more.
+MAX_FAILED_CODE_ATTEMPTS = 10
+FAILED_ATTEMPT_WINDOW_SECONDS = 10 * 60
 ALLOWED_MESSAGES = {
-    'receiver': {'answer', 'ice', 'ping'},
-    'sender': {'offer', 'ice', 'ping'},
+    'receiver': {'answer', 'decline', 'ice', 'pending', 'ping'},
+    'sender': {'discover', 'offer', 'ice', 'ping'},
 }
 
 _table = None
@@ -54,35 +64,60 @@ def response(status_code, body=''):
     return {'statusCode': status_code, 'body': body}
 
 
+def normalize_session_id(value):
+    return re.sub(r'[\s-]', '', str(value or '')).upper()
+
+
+def clean_name(value, fallback):
+    name = re.sub(r'[\x00-\x1f\x7f]', '', str(value or '')).strip()
+    return name[:MAX_NAME_LENGTH] or fallback
+
+
+def is_live(item, now=None):
+    return int(item.get('expiresAt', 0)) > (now or time.time())
+
+
+def session_key(session_id, connection_id):
+    return {'pk': f'session#{session_id}', 'sk': f'connection#{connection_id}'}
+
+
+def meta_key(connection_id):
+    return {'pk': f'connection#{connection_id}', 'sk': 'meta'}
+
+
+def discovery_key(source_ip, connection_id):
+    return {'pk': f'ip#{source_ip}', 'sk': f'receiver#{connection_id}'}
+
+
 def get_connection(connection_id):
-    item = get_table().get_item(
-        Key={'pk': f'connection#{connection_id}', 'sk': 'meta'},
-    ).get('Item')
-    return item if item and int(item.get('expiresAt', 0)) > time.time() else None
+    item = get_table().get_item(Key=meta_key(connection_id)).get('Item')
+    return item if item and is_live(item) else None
 
 
-def remove_connection(session_id, connection_id):
-    table = get_table()
-    table.delete_item(Key={'pk': f'session#{session_id}', 'sk': f'connection#{connection_id}'})
-    table.delete_item(Key={'pk': f'connection#{connection_id}', 'sk': 'meta'})
-
-
-def list_peers(session_id, connection_id, role):
+def query_partition(pk):
     items = get_table().query(
         KeyConditionExpression='pk = :pk',
-        ExpressionAttributeValues={':pk': f'session#{session_id}'},
+        ExpressionAttributeValues={':pk': pk},
     ).get('Items', [])
     now = time.time()
-    return [
-        item
-        for item in items
-        if item.get('connectionId') != connection_id
-        and item.get('role') != role
-        and int(item.get('expiresAt', 0)) > now
-    ]
+    return [item for item in items if is_live(item, now)]
 
 
-def post_to_connection(request_context, session_id, connection_id, payload):
+def remove_connection(connection_id, connection=None):
+    connection = connection or get_table().get_item(Key=meta_key(connection_id)).get('Item') or {}
+    table = get_table()
+    if connection.get('sessionId'):
+        table.delete_item(Key=session_key(connection['sessionId'], connection_id))
+    if connection.get('role') == 'receiver' and connection.get('sourceIp'):
+        table.delete_item(Key=discovery_key(connection['sourceIp'], connection_id))
+    table.delete_item(Key=meta_key(connection_id))
+
+
+def session_members(session_id, role):
+    return [item for item in query_partition(f'session#{session_id}') if item.get('role') == role]
+
+
+def post_to_connection(request_context, connection_id, payload):
     client = get_management_client(request_context['domainName'], request_context['stage'])
     try:
         client.post_to_connection(
@@ -93,39 +128,88 @@ def post_to_connection(request_context, session_id, connection_id, payload):
     except Exception as error:  # boto3 raises GoneException as a ClientError subclass
         code = getattr(error, 'response', {}).get('Error', {}).get('Code')
         if code == 'GoneException':
-            remove_connection(session_id, connection_id)
+            remove_connection(connection_id)
         else:
             LOGGER.exception('PostToConnection failed for %s', connection_id)
         return False
 
 
+def record_failed_code_attempt(source_ip):
+    """Counts an offer to a code with no TV; returns the count in this window."""
+    window = int(time.time()) // FAILED_ATTEMPT_WINDOW_SECONDS
+    result = get_table().update_item(
+        Key={'pk': f'rate#{source_ip}', 'sk': f'window#{window}'},
+        UpdateExpression='ADD attempts :one SET expiresAt = :expires',
+        ExpressionAttributeValues={
+            ':one': 1,
+            ':expires': (window + 1) * FAILED_ATTEMPT_WINDOW_SECONDS,
+        },
+        ReturnValues='UPDATED_NEW',
+    )
+    return int(result['Attributes']['attempts'])
+
+
+def is_rate_limited(source_ip):
+    window = int(time.time()) // FAILED_ATTEMPT_WINDOW_SECONDS
+    item = get_table().get_item(
+        Key={'pk': f'rate#{source_ip}', 'sk': f'window#{window}'},
+    ).get('Item')
+    return bool(item) and int(item.get('attempts', 0)) >= MAX_FAILED_CODE_ATTEMPTS
+
+
 def on_connect(event, connection_id):
     params = event.get('queryStringParameters') or {}
-    session_id = (params.get('sessionId') or '').strip().upper()
     role = params.get('role')
-
-    if not SESSION_ID_PATTERN.match(session_id) or role not in ALLOWED_MESSAGES:
-        return response(400, 'a valid sessionId and role (receiver or sender) are required')
-
-    expires_at = int(time.time()) + CONNECTION_TTL_SECONDS
     source_ip = event['requestContext'].get('identity', {}).get('sourceIp', '')
+    expires_at = int(time.time()) + CONNECTION_TTL_SECONDS
     table = get_table()
-    table.put_item(Item={
-        'pk': f'session#{session_id}',
-        'sk': f'connection#{connection_id}',
-        'connectionId': connection_id,
-        'role': role,
-        'expiresAt': expires_at,
-    })
-    table.put_item(Item={
-        'pk': f'connection#{connection_id}',
-        'sk': 'meta',
-        'sessionId': session_id,
-        'role': role,
-        'sourceIp': source_ip,
-        'expiresAt': expires_at,
-    })
-    return response(200)
+
+    if role == 'receiver':
+        session_id = normalize_session_id(params.get('sessionId'))
+        if not SESSION_ID_PATTERN.match(session_id):
+            return response(400, 'receivers need a valid sessionId')
+
+        name = clean_name(params.get('name'), f'TV {session_id}')
+        table.put_item(Item={
+            **session_key(session_id, connection_id),
+            'connectionId': connection_id,
+            'role': role,
+            'sourceIp': source_ip,
+            'expiresAt': expires_at,
+        })
+        table.put_item(Item={
+            **discovery_key(source_ip, connection_id),
+            'connectionId': connection_id,
+            'sessionId': session_id,
+            'name': name,
+            'expiresAt': expires_at,
+        })
+        table.put_item(Item={
+            **meta_key(connection_id),
+            'role': role,
+            'sessionId': session_id,
+            'name': name,
+            'sourceIp': source_ip,
+            'expiresAt': expires_at,
+        })
+        return response(200)
+
+    if role == 'sender':
+        client_id = params.get('clientId') or ''
+        if not CLIENT_ID_PATTERN.match(client_id):
+            return response(400, 'senders need a valid clientId')
+
+        table.put_item(Item={
+            **meta_key(connection_id),
+            'role': role,
+            'clientId': client_id,
+            'name': clean_name(params.get('name'), 'A device'),
+            'sourceIp': source_ip,
+            'expiresAt': expires_at,
+        })
+        return response(200)
+
+    return response(400, 'role must be receiver or sender')
 
 
 def on_disconnect(event, connection_id):
@@ -133,15 +217,74 @@ def on_disconnect(event, connection_id):
     if not connection:
         return response(200)
 
-    session_id = connection['sessionId']
-    remove_connection(session_id, connection_id)
-    for peer in list_peers(session_id, connection_id, connection['role']):
-        post_to_connection(
-            event['requestContext'],
-            session_id,
-            peer['connectionId'],
-            {'type': 'peer-left', 'from': connection['role']},
-        )
+    remove_connection(connection_id, connection)
+    session_id = connection.get('sessionId')
+    if not session_id:
+        return response(200)
+
+    role = connection['role']
+    payload = {'type': 'peer-left', 'from': role, 'sessionId': session_id}
+    if role == 'sender':
+        payload['senderId'] = connection_id
+    other_role = 'sender' if role == 'receiver' else 'receiver'
+    for peer in session_members(session_id, other_role):
+        post_to_connection(event['requestContext'], peer['connectionId'], payload)
+    return response(200)
+
+
+def handle_discover(request_context, connection_id, connection):
+    receivers = [
+        {'sessionId': item['sessionId'], 'name': item.get('name', item['sessionId'])}
+        for item in query_partition(f'ip#{connection["sourceIp"]}')
+    ]
+    receivers.sort(key=lambda receiver: receiver['name'].lower())
+    post_to_connection(request_context, connection_id, {'type': 'receivers', 'receivers': receivers})
+    return response(200)
+
+
+def handle_offer(request_context, connection_id, connection, message):
+    source_ip = connection['sourceIp']
+    session_id = normalize_session_id(message.get('sessionId'))
+    if not SESSION_ID_PATTERN.match(session_id):
+        return response(400, 'offer needs a valid sessionId')
+
+    if is_rate_limited(source_ip):
+        post_to_connection(request_context, connection_id, {
+            'type': 'error', 'reason': 'rate-limited', 'sessionId': session_id,
+        })
+        return response(429)
+
+    receivers = session_members(session_id, 'receiver')
+    if not receivers:
+        record_failed_code_attempt(source_ip)
+        post_to_connection(request_context, connection_id, {
+            'type': 'error', 'reason': 'no-peer', 'sessionId': session_id,
+        })
+        return response(200)
+
+    # Bind the sender to this session so answers, ICE and departures reach it.
+    table = get_table()
+    if connection.get('sessionId') and connection['sessionId'] != session_id:
+        table.delete_item(Key=session_key(connection['sessionId'], connection_id))
+    table.put_item(Item={
+        **session_key(session_id, connection_id),
+        'connectionId': connection_id,
+        'role': 'sender',
+        'sourceIp': source_ip,
+        'expiresAt': int(connection['expiresAt']),
+    })
+    table.put_item(Item={**connection, 'sessionId': session_id})
+
+    for receiver in receivers:
+        post_to_connection(request_context, receiver['connectionId'], {
+            'type': 'offer',
+            'sdp': message.get('sdp', ''),
+            'sessionId': session_id,
+            'senderId': connection_id,
+            'senderName': connection['name'],
+            'clientId': connection['clientId'],
+            'sameNetwork': receiver.get('sourceIp') == source_ip,
+        })
     return response(200)
 
 
@@ -162,24 +305,32 @@ def on_message(event, connection_id):
     if message_type == 'ping':
         return response(200)
 
-    session_id = connection['sessionId']
     request_context = event['requestContext']
-    # Session and role come from the connection record, never from the message.
-    payload = {**message, 'sessionId': session_id, 'from': role}
-    payload.pop('role', None)
+    if message_type == 'discover':
+        return handle_discover(request_context, connection_id, connection)
+    if message_type == 'offer':
+        return handle_offer(request_context, connection_id, connection, message)
 
-    peers = list_peers(session_id, connection_id, role)
-    delivered = sum(
-        post_to_connection(request_context, session_id, peer['connectionId'], payload)
-        for peer in peers
-    )
-    if delivered == 0 and message_type in ('offer', 'answer'):
-        post_to_connection(
-            request_context,
-            session_id,
-            connection_id,
-            {'type': 'error', 'reason': 'no-peer', 'sessionId': session_id},
-        )
+    session_id = connection.get('sessionId')
+    if not session_id:
+        return response(400, 'send an offer before other session messages')
+
+    # Session and identity come from the connection records, never the message.
+    payload = {**message, 'sessionId': session_id, 'from': role}
+    payload.pop('to', None)
+    if role == 'sender':
+        payload['senderId'] = connection_id
+        targets = session_members(session_id, 'receiver')
+    else:
+        # The TV answers one sender at a time; it must name which.
+        target_id = message.get('to')
+        targets = [
+            member for member in session_members(session_id, 'sender')
+            if member['connectionId'] == target_id
+        ]
+
+    for target in targets:
+        post_to_connection(request_context, target['connectionId'], payload)
     return response(200)
 
 
