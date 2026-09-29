@@ -13,6 +13,6 @@ Source artwork for the Amazon Appstore listing and the Vega app. Title: **Tandem
 - `vega-app/assets/image/app_icon.png`: the package icon, from `vega/settings-icon.svg`.
 - `vega-app/assets/raw/SplashScreenImages.zip`: a static 1920×1080 splash, which is the app icon artwork centered on the app background (#111827).
 
-`fire-tv/screenshots/` holds the listing screenshots (1920×1080, 24-bit PNG, no transparency; Amazon wants 3–10): the pairing screen, the approval prompt, a Fire tablet sharing to the TV, and Allowed devices. `scripts/capture-tv-screenshot.sh <name>` captures the connected Fire TV's screen into that folder in the right format.
+`fire-tv/screenshots/` holds the listing screenshots (1920×1080, 24-bit PNG, no transparency; Amazon wants 3–10): the pairing screen, the approval prompt and Allowed devices. `scripts/capture-tv-screenshot.sh <name>` captures the connected Fire TV's screen into that folder in the right format.
 
-Listing text, keywords and reviewer instructions are in `listing.md`. If the form asks for the small (114×114) and large (512×512) icons, they can come from `public/sender/icons/icon.svg`.
+`appstore/icon-512.png` and `appstore/icon-114.png` are the tablet listing icons the console requires (PNG with transparency), rendered from `public/sender/icons/icon.svg`. The tablet screenshots field accepts 1920×1080, so it reuses `fire-tv/screenshots/`.

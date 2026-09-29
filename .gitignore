@@ -147,3 +147,6 @@ tandem.config.json
 
 # Python
 __pycache__/
+
+# Appstore listing drafts (kept local)
+store/listing.md

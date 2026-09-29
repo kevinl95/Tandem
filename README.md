@@ -125,6 +125,8 @@ vega run-app build/armv7-debug/tandemreceiver_armv7.vpkg   # Fire TV Stick
 
 The Vega Virtual Device can't run this app because it lacks the WebView 4 module. Use a physical Fire TV Stick.
 
+`npm run build:release` builds the Appstore package: armv7, which is what Vega Fire TV Sticks run. The other architectures are only for the Vega Virtual Device (x86_64 on Intel computers, aarch64 on Apple Silicon Macs), so don't upload them; the Appstore matches no Fire TV devices to them. Each release needs a higher version and build number (1.0.0 is build 1); set both in the `build:release` script in `vega-app/package.json`, and keep the version in `manifest.toml` matching.
+
 ### WebRTC probe
 
 **Run WebRTC diagnostics** on the receiver page checks the WebRTC APIs, the video receive codecs, ICE host candidates (including mDNS obfuscation), and a loopback video decode. It shows the results on screen and logs them with the `[tandem]` prefix:
