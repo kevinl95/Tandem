@@ -5,16 +5,18 @@
 //   src/receiver/config.js, src/sender/sender.js             ES modules it imports
 //   config.json                                              signaling endpoint (+ APK link)
 //   downloads/tandem.apk                                     Android app, if built
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 export const DEFAULT_OUT_DIR = path.join(repoRoot, "dist", "site");
-export const APK_SOURCE = path.join(
-  repoRoot,
-  "android-sender/app/build/outputs/apk/debug/app-debug.apk",
-);
+// The signed release build when it exists (see README: Android release
+// signing), otherwise the debug build.
+const RELEASE_APK = path.join(repoRoot, "android-sender/app/build/outputs/apk/release/app-release.apk");
+const DEBUG_APK = path.join(repoRoot, "android-sender/app/build/outputs/apk/debug/app-debug.apk");
+export const APK_SOURCE = existsSync(RELEASE_APK) ? RELEASE_APK : DEBUG_APK;
 export const APK_PATH = "downloads/tandem.apk";
 
 function replaceExactlyOnce(source, searchValue, replaceValue, label) {

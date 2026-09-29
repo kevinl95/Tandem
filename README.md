@@ -62,7 +62,9 @@ JAVA_HOME=/path/to/jdk-21 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The APK is sideloaded; there's no store listing. It runs on Android 5.1 (API 22) and newer, which covers Fire tablets back to Fire OS 5. Fire OS has no Google Play, and the app doesn't need it: turn on "Apps from unknown sources" and install the APK. On devices with less than 2 GB of RAM, or ones Android marks as low-RAM, the app captures at 1280 px on the long edge and 24 fps instead of 1920 px and 30 fps, so older tablets can keep up with real-time encoding.
+**Release signing.** `./gradlew assembleRelease` signs with a key kept outside the repo. `~/.gradle/gradle.properties` sets `tandem.keystore.file`, `tandem.keystore.password`, `tandem.key.alias` and `tandem.key.password`. Back up the keystore and its password together: app updates must be signed with the same key. The website serves the release APK when one is built, and the debug APK otherwise. Android won't install a build signed with a different key over an existing install, so switching between debug and release builds means uninstalling first.
+
+The APK is available from the website, and it's being submitted to the Amazon Appstore for Fire tablets. It runs on Android 5.1 (API 22) and newer, which covers Fire tablets back to Fire OS 5. Fire OS has no Google Play, and the app doesn't need it: turn on "Apps from unknown sources" and install the APK. On devices with less than 2 GB of RAM, or ones Android marks as low-RAM, the app captures at 1280 px on the long edge and 24 fps instead of 1920 px and 30 fps, so older tablets can keep up with real-time encoding.
 
 **Compatibility mode** encodes video in software (VP8) at 960 px and 24 fps instead of using the device's hardware encoder. On a 2016 Fire tablet (Fire OS 5), the hardware encoder produced corrupt frames that showed up on the TV as horizontal lines, and compatibility mode fixed it. It's on by default for Android 7.1 and older (Fire OS 5 and 6) and devices under 2 GB of RAM, and the checkbox in the app overrides the default. While sharing, the app shows what it's sending: capture size, codec and encoder.
 

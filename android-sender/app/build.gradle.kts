@@ -13,9 +13,33 @@ val signalingEndpoint: String = providers.gradleProperty("tandem.signalingEndpoi
     }
     ?: ""
 
+// Release signing comes from ~/.gradle/gradle.properties (never the repo):
+// tandem.keystore.file, tandem.keystore.password, tandem.key.alias, tandem.key.password.
+val releaseKeystore: String? = providers.gradleProperty("tandem.keystore.file").orNull
+
 android {
     namespace = "com.kloeffler.tandem.sender"
     compileSdk = 34
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = providers.gradleProperty("tandem.keystore.password").get()
+                keyAlias = providers.gradleProperty("tandem.key.alias").get()
+                keyPassword = providers.gradleProperty("tandem.key.password").get()
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // WebRTC's native code calls Java methods by name, so shrinking
+            // would need careful keep rules; the size saving isn't worth it.
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
+        }
+    }
 
     defaultConfig {
         applicationId = "com.kloeffler.tandem.sender"
@@ -25,7 +49,7 @@ android {
         minSdk = 22
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
         buildConfigField("String", "SIGNALING_ENDPOINT", "\"$signalingEndpoint\"")
         // Phones only; the WebRTC native libraries dominate the APK size.
         ndk {
