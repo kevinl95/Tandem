@@ -212,6 +212,10 @@ object TandemController {
     }
 
     private fun deviceName(): String {
+        // Fire tablets report model codes such as "KFFOWI"; show something readable.
+        if (Build.MANUFACTURER.equals("Amazon", ignoreCase = true) && Build.MODEL.orEmpty().startsWith("KF")) {
+            return "Fire tablet"
+        }
         val model = Build.MODEL.orEmpty()
         val manufacturer = Build.MANUFACTURER.orEmpty().replaceFirstChar { it.uppercase() }
         return if (model.startsWith(manufacturer, ignoreCase = true)) model else "$manufacturer $model".trim()
