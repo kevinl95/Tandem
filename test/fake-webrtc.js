@@ -103,6 +103,11 @@ export class FakePeerConnection {
     this.closed = true;
     this.connectionState = "closed";
   }
+
+  // Tests set this.stats to a Map of stats entries.
+  async getStats() {
+    return this.stats ?? new Map();
+  }
 }
 
 // Installs the fakes as globals for one test and restores the originals after.

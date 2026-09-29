@@ -128,10 +128,14 @@ function renderReceivers() {
       button.disabled = isSharing || !canCapture;
       const label = document.createElement("span");
       label.textContent = name;
-      const code = document.createElement("span");
-      code.className = "code";
-      code.textContent = sessionId;
-      button.append(label, code);
+      button.append(label);
+      // Default TV names already contain the code.
+      if (!name.includes(sessionId)) {
+        const code = document.createElement("span");
+        code.className = "code";
+        code.textContent = sessionId;
+        button.append(code);
+      }
       button.addEventListener("click", () => startSharing(sessionId));
 
       const item = document.createElement("li");
@@ -157,6 +161,9 @@ function describePath(connection) {
 }
 
 async function renderStats() {
+  if (!statsSection.open) {
+    return;
+  }
   const connection = await sender?.describeConnection();
   if (!connection) {
     return;

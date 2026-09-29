@@ -221,6 +221,35 @@ test("the TV can end a share and tells the sender why", async (t) => {
   assert.deepEqual(socket.sent.at(-1), { reason: "ended", to: "laptop", type: "decline" });
 });
 
+test("receiver summarizes incoming video for diagnostics", async (t) => {
+  const { receiver, socket } = startReceiver(t, { trusted: ["client-laptop"] });
+  assert.equal(await receiver.describeInbound(), null);
+
+  socket.receive(offerFrom("laptop"));
+  await flushAsync();
+  FakePeerConnection.instances[0].stats = new Map([
+    ["codec-1", { mimeType: "video/VP8", type: "codec" }],
+    ["in-1", {
+      codecId: "codec-1",
+      frameHeight: 800,
+      frameWidth: 1280,
+      framesDecoded: 240,
+      framesDropped: 3,
+      kind: "video",
+      pliCount: 7,
+      type: "inbound-rtp",
+    }],
+  ]);
+
+  const inbound = await receiver.describeInbound();
+
+  assert.equal(inbound.codec, "video/VP8");
+  assert.equal(inbound.width, 1280);
+  assert.equal(inbound.framesDropped, 3);
+  assert.equal(inbound.pliCount, 7);
+  assert.equal(inbound.nackCount, null);
+});
+
 test("receiver returns to waiting when the peer connection fails", async (t) => {
   const { socket, states } = startReceiver(t, { trusted: ["client-laptop"] });
 

@@ -12,6 +12,10 @@
     <string name="share">Share</string>
     <string name="tv_button">%1$s  ·  %2$s</string>
     <string name="stop_sharing">Stop sharing</string>
+    <string name="crash_report">Tandem crashed last time. Please send this to support@tandemscreen.com:\n\n%1$s</string>
+    <string name="show_connection_details">Show connection details</string>
+    <string name="hide_connection_details">Hide connection details</string>
+    <string name="compatibility_mode">Compatibility mode: try this if the TV picture is garbled (lower quality, software encoding)</string>
     <string name="enter_code">Enter the 6-character code shown on the TV.</string>
     <string name="capture_denied">Screen capture was not started.</string>
     <string name="notification_channel">Screen sharing</string>

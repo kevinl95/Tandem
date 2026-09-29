@@ -20,6 +20,19 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/crash_report"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="#FF3F1D1D"
+            android:fontFamily="monospace"
+            android:padding="12dp"
+            android:textColor="#FFFCA5A5"
+            android:textIsSelectable="true"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
             android:id="@+id/tvs_heading"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -97,6 +110,16 @@
                 android:text="@string/share" />
         </LinearLayout>
 
+        <CheckBox
+            android:id="@+id/compatibility_mode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:minHeight="48dp"
+            android:text="@string/compatibility_mode"
+            android:textColor="#FFF9FAFB"
+            android:textSize="16sp" />
+
         <TextView
             android:id="@+id/status"
             android:layout_width="match_parent"
@@ -105,6 +128,28 @@
             android:accessibilityLiveRegion="polite"
             android:textColor="#FFF9FAFB"
             android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/share_details_toggle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:text="@string/show_connection_details"
+            android:textColor="#FF93C5FD"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/share_details"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:fontFamily="monospace"
+            android:textColor="#FF9CA3AF"
+            android:textSize="13sp"
+            android:visibility="gone" />
 
         <Button
             android:id="@+id/stop_sharing"

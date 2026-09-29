@@ -8,6 +8,8 @@ import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.SoftwareVideoEncoderFactory
+import org.webrtc.VideoEncoderFactory
 import org.webrtc.audio.JavaAudioDeviceModule
 import java.util.UUID
 
@@ -25,10 +27,27 @@ object TandemController {
     private var signaling: TandemSignaling? = null
     private val observers = mutableSetOf<Observer>()
     private val eglBase: EglBase by lazy { EglBase.create() }
-    private val factory: PeerConnectionFactory by lazy {
+    private val hardwareFactory: PeerConnectionFactory by lazy {
+        createFactory { DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true) }
+    }
+
+    // Compatibility mode: encode video in software (VP8), for devices whose
+    // hardware encoder produces corrupted frames, such as some older Fire tablets.
+    private val softwareFactory: PeerConnectionFactory by lazy {
+        createFactory { SoftwareVideoEncoderFactory() }
+    }
+
+    private val isWebRtcInitialized by lazy {
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(appContext).createInitializationOptions(),
         )
+        true
+    }
+
+    // Encoder factories call into WebRTC's native library, so they must be
+    // constructed only after PeerConnectionFactory.initialize() has loaded it.
+    private fun createFactory(encoderFactory: () -> VideoEncoderFactory): PeerConnectionFactory {
+        check(isWebRtcInitialized)
         val audioDeviceModule = JavaAudioDeviceModule.builder(appContext)
             // Playback audio replaces the microphone signal (see ShareAudio),
             // so skip voice processing meant for the microphone.
@@ -37,11 +56,34 @@ object TandemController {
             .setUseStereoInput(true)
             .setAudioRecordDataCallback(ShareAudio)
             .createAudioDeviceModule()
-        PeerConnectionFactory.builder()
+        return PeerConnectionFactory.builder()
             .setAudioDeviceModule(audioDeviceModule)
-            .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true))
+            .setVideoEncoderFactory(encoderFactory())
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
             .createPeerConnectionFactory()
+    }
+
+    private val preferences by lazy { appContext.getSharedPreferences("tandem", Context.MODE_PRIVATE) }
+
+    // On by default for devices whose hardware encoders are known to corrupt
+    // frames (a 2016 Fire tablet on Fire OS 5 did), until the user chooses.
+    var compatibilityMode: Boolean
+        get() = if (preferences.contains("compatibilityMode")) {
+            preferences.getBoolean("compatibilityMode", false)
+        } else {
+            DeviceProfile.needsCompatibilityMode(appContext)
+        }
+        set(value) = preferences.edit().putBoolean("compatibilityMode", value).apply()
+
+    /** What the current share is sending, e.g. for spotting encoder problems. */
+    var shareDetails: String? = null
+        private set
+
+    fun refreshShareDetails() {
+        session?.describe { details ->
+            shareDetails = details
+            notifyObservers()
+        }
     }
 
     var receivers: List<TandemSignaling.Receiver> = emptyList()
@@ -127,9 +169,12 @@ object TandemController {
             return
         }
 
+        shareDetails = null
+        val compatible = compatibilityMode
         session = ScreenShareSession(
             context = appContext,
-            factory = factory,
+            factory = if (compatible) softwareFactory else hardwareFactory,
+            compatibilityMode = compatible,
             eglBase = eglBase,
             projectionData = projectionData,
             sessionId = sessionId,
@@ -161,7 +206,6 @@ object TandemController {
 
     // A stable id lets the TV remember that it already allowed this phone.
     private fun clientId(): String {
-        val preferences = appContext.getSharedPreferences("tandem", Context.MODE_PRIVATE)
         return preferences.getString("clientId", null) ?: UUID.randomUUID().toString().also {
             preferences.edit().putString("clientId", it).apply()
         }

@@ -8,6 +8,7 @@ const APPROVAL_TIMEOUT_MS = 30000;
 // Disconnect after this long with nobody sharing: an open connection is billed
 // by the minute, and TVs are often left on.
 const IDLE_PAUSE_MS = 15 * 60 * 1000;
+const STATS_LOG_INTERVAL_MS = 10 * 1000;
 // Vega remote keys arrive as these keyCodes in the WebView.
 const KEY_ENTER = 13;
 const KEY_BACK = 27;
@@ -263,6 +264,16 @@ function start() {
   }
 
   let idleTimer = null;
+  let statsTimer = null;
+  // While streaming, log what arrives (through the Vega shell into the device
+  // log) so sender-side encoder problems can be diagnosed from the TV.
+  async function logInboundStats() {
+    const inbound = await receiver.describeInbound().catch(() => null);
+    if (inbound) {
+      globalThis.ReactNativeWebView?.postMessage(JSON.stringify({ type: "stats", ...inbound }));
+      console.info("[tandem-receiver] stats", inbound);
+    }
+  }
   const receiver = new ScreenMirrorReceiver(videoElement, {
     ...config,
     isBlockedSender: (clientId) => devices.isBlocked(clientId),
@@ -272,6 +283,10 @@ function start() {
     requestApproval,
     sessionId: sessionCode,
     onStateChange(state, detail) {
+      clearInterval(statsTimer);
+      if (state === "streaming") {
+        statsTimer = setInterval(logInboundStats, STATS_LOG_INTERVAL_MS);
+      }
       // Only an idle, connected TV counts down to pausing.
       clearTimeout(idleTimer);
       if (state === "waiting") {

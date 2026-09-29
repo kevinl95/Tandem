@@ -14,6 +14,7 @@ import android.os.Looper
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -26,15 +27,26 @@ class MainActivity : Activity(), TandemController.Observer {
     private lateinit var shareCodeButton: Button
     private lateinit var statusText: TextView
     private lateinit var stopButton: Button
+    private lateinit var compatibilityCheckBox: CheckBox
+    private lateinit var shareDetails: TextView
+    private lateinit var shareDetailsToggle: TextView
+    private var showShareDetails = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingSessionId: String? = null
     private var askedForAudio = false
 
-    // Keep the TV list fresh while the app is open and idle.
+    // Keep the TV list fresh while the app is open and idle, and the share
+    // details current while sharing.
     private val discoveryLoop = object : Runnable {
         override fun run() {
             TandemController.discover()
             mainHandler.postDelayed(this, DISCOVERY_INTERVAL_MS)
+        }
+    }
+    private val detailsLoop = object : Runnable {
+        override fun run() {
+            if (TandemController.isSharing && showShareDetails) TandemController.refreshShareDetails()
+            mainHandler.postDelayed(this, DETAILS_INTERVAL_MS)
         }
     }
 
@@ -48,6 +60,25 @@ class MainActivity : Activity(), TandemController.Observer {
         shareCodeButton = findViewById(R.id.share_code)
         statusText = findViewById(R.id.status)
         stopButton = findViewById(R.id.stop_sharing)
+        compatibilityCheckBox = findViewById(R.id.compatibility_mode)
+        shareDetails = findViewById(R.id.share_details)
+        shareDetailsToggle = findViewById(R.id.share_details_toggle)
+        // Diagnostics for support (e.g. spotting a bad hardware encoder),
+        // hidden unless asked for.
+        shareDetailsToggle.setOnClickListener {
+            showShareDetails = !showShareDetails
+            render()
+        }
+        CrashReport.takeLast(this)?.let { report ->
+            findViewById<TextView>(R.id.crash_report).apply {
+                text = getString(R.string.crash_report, report)
+                visibility = View.VISIBLE
+            }
+        }
+        compatibilityCheckBox.isChecked = TandemController.compatibilityMode
+        compatibilityCheckBox.setOnCheckedChangeListener { _, checked ->
+            TandemController.compatibilityMode = checked
+        }
 
         shareCodeButton.setOnClickListener { shareTypedCode() }
         codeInput.setOnEditorActionListener { _, actionId, _ ->
@@ -69,6 +100,7 @@ class MainActivity : Activity(), TandemController.Observer {
         TandemController.isUiVisible = true
         TandemController.connect()
         mainHandler.post(discoveryLoop)
+        mainHandler.post(detailsLoop)
         render()
     }
 
@@ -78,6 +110,7 @@ class MainActivity : Activity(), TandemController.Observer {
         // the connection for the share that's about to start.
         TandemController.isUiVisible = pendingSessionId != null
         mainHandler.removeCallbacks(discoveryLoop)
+        mainHandler.removeCallbacks(detailsLoop)
         super.onStop()
     }
 
@@ -145,7 +178,12 @@ class MainActivity : Activity(), TandemController.Observer {
         for (receiver in TandemController.receivers) {
             tvList.addView(
                 Button(this).apply {
-                    text = getString(R.string.tv_button, receiver.name, receiver.sessionId)
+                    // Default TV names already contain the code.
+                    text = if (receiver.name.contains(receiver.sessionId)) {
+                        receiver.name
+                    } else {
+                        getString(R.string.tv_button, receiver.name, receiver.sessionId)
+                    }
                     isAllCaps = false
                     isEnabled = !sharing
                     setOnClickListener { requestCapture(receiver.sessionId) }
@@ -163,6 +201,15 @@ class MainActivity : Activity(), TandemController.Observer {
         shareCodeButton.isEnabled = !sharing
         codeInput.isEnabled = !sharing
         stopButton.visibility = if (sharing) View.VISIBLE else View.GONE
+        // The setting applies to the next share.
+        compatibilityCheckBox.isEnabled = !sharing
+        val details = TandemController.shareDetails
+        shareDetailsToggle.visibility = if (sharing) View.VISIBLE else View.GONE
+        shareDetailsToggle.setText(
+            if (showShareDetails) R.string.hide_connection_details else R.string.show_connection_details,
+        )
+        shareDetails.visibility = if (sharing && showShareDetails && details != null) View.VISIBLE else View.GONE
+        shareDetails.text = details
         TandemController.lastShareState?.let { statusText.setText(statusMessage(it, vpnActive)) }
     }
 
@@ -199,5 +246,6 @@ class MainActivity : Activity(), TandemController.Observer {
         const val REQUEST_AUDIO = 2
         // Each discovery is a billed round trip; this only runs while visible.
         const val DISCOVERY_INTERVAL_MS = 15_000L
+        const val DETAILS_INTERVAL_MS = 2_000L
     }
 }

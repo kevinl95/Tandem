@@ -202,6 +202,35 @@ export class ScreenMirrorReceiver {
     }
   }
 
+  // Summarizes the incoming video, for diagnosing senders whose encoders
+  // produce corrupt frames: decode errors show up as dropped frames, repeated
+  // keyframe requests (PLI) and retransmissions (NACK).
+  async describeInbound() {
+    if (!this.peerConnection) {
+      return null;
+    }
+
+    const stats = await this.peerConnection.getStats();
+    const video = [...stats.values()].find((entry) => entry.type === "inbound-rtp" && entry.kind === "video");
+    if (!video) {
+      return null;
+    }
+
+    return {
+      codec: stats.get(video.codecId)?.mimeType ?? null,
+      decoder: video.decoderImplementation ?? null,
+      framesDecoded: video.framesDecoded ?? null,
+      framesDropped: video.framesDropped ?? null,
+      framesPerSecond: video.framesPerSecond ?? null,
+      height: video.frameHeight ?? null,
+      keyFramesDecoded: video.keyFramesDecoded ?? null,
+      nackCount: video.nackCount ?? null,
+      packetsLost: video.packetsLost ?? null,
+      pliCount: video.pliCount ?? null,
+      width: video.frameWidth ?? null,
+    };
+  }
+
   get hasShare() {
     return this.peerConnection !== null;
   }

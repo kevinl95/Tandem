@@ -1,6 +1,5 @@
 package com.kloeffler.tandem.sender
 
-import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjection
@@ -50,6 +49,7 @@ class ScreenShareSession(
     private val factory: PeerConnectionFactory,
     private val eglBase: EglBase,
     private val projectionData: Intent,
+    private val compatibilityMode: Boolean,
     val sessionId: String,
     private val includeAudio: Boolean,
     private val send: (JSONObject) -> Boolean,
@@ -75,6 +75,24 @@ class ScreenShareSession(
     }
     var state: ShareState = ShareState.OFFERING
         private set
+    private var captureDescription = ""
+
+    /** Reports what's being sent: capture size, codec, encoder and frame rate. */
+    fun describe(onResult: (String) -> Unit) {
+        val connection = peerConnection ?: return
+        connection.getStats { report ->
+            val stats = report.statsMap.values
+            val video = stats.firstOrNull { it.type == "outbound-rtp" && it.members["kind"] == "video" }
+            val codec = video?.members?.get("codecId")?.let { report.statsMap[it]?.members?.get("mimeType") }
+            val details = listOfNotNull(
+                "Capturing $captureDescription",
+                video?.members?.let { "sending ${it["frameWidth"] ?: "?"}x${it["frameHeight"] ?: "?"} at ${it["framesPerSecond"] ?: "?"} fps" },
+                codec?.toString(),
+                video?.members?.get("encoderImplementation")?.toString(),
+            ).joinToString(" · ")
+            mainHandler.post { onResult(details) }
+        }
+    }
 
     fun start() {
         val source = factory.createVideoSource(/* isScreencast = */ true)
@@ -89,10 +107,16 @@ class ScreenShareSession(
         surfaceTextureHelper = helper
         capturer = screenCapturer
         screenCapturer.initialize(helper, context, source.capturerObserver)
-        val lowMemory = isLowMemoryDevice()
-        val (width, height) = captureSize(if (lowMemory) LOW_MEMORY_MAX_CAPTURE_EDGE else MAX_CAPTURE_EDGE)
-        val fps = if (lowMemory) LOW_MEMORY_CAPTURE_FPS else CAPTURE_FPS
-        Log.i(TAG, "Capturing ${width}x$height at $fps fps (low memory: $lowMemory)")
+        val lowMemory = DeviceProfile.isLowMemory(context)
+        val maxEdge = when {
+            compatibilityMode -> COMPATIBILITY_MAX_CAPTURE_EDGE
+            lowMemory -> LOW_MEMORY_MAX_CAPTURE_EDGE
+            else -> MAX_CAPTURE_EDGE
+        }
+        val (width, height) = captureSize(maxEdge)
+        val fps = if (compatibilityMode || lowMemory) LOW_MEMORY_CAPTURE_FPS else CAPTURE_FPS
+        captureDescription = "${width}x$height at $fps fps"
+        Log.i(TAG, "Capturing $captureDescription (low memory: $lowMemory, compatibility: $compatibilityMode)")
         screenCapturer.startCapture(width, height, fps)
 
         val configuration = PeerConnection.RTCConfiguration(emptyList()).apply {
@@ -111,7 +135,8 @@ class ScreenShareSession(
                 listOf(STREAM_ID),
             ),
         )
-        preferH264(transceiver)
+        // The software encoder has no H264; it negotiates VP8 instead.
+        if (!compatibilityMode) preferH264(transceiver)
 
         if (includeAudio) {
             screenCapturer.mediaProjection?.let { projection ->
@@ -235,20 +260,14 @@ class ScreenShareSession(
         onState(newState)
     }
 
-    // Older Fire tablets have 1-1.5 GB of RAM and slow encoders; ask them for
-    // less so real-time encoding keeps up.
-    private fun isLowMemoryDevice(): Boolean {
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val memory = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
-        return activityManager.isLowRamDevice || memory.totalMem < LOW_MEMORY_THRESHOLD_BYTES
-    }
-
     // Scale the display down so its long edge fits what the TV decodes smoothly.
     private fun captureSize(maxEdge: Int): Pair<Int, Int> {
         val metrics = context.resources.displayMetrics
         val scale = minOf(1.0, maxEdge.toDouble() / max(metrics.widthPixels, metrics.heightPixels))
-        fun even(value: Double) = (value.roundToInt() / 2) * 2
-        return even(metrics.widthPixels * scale) to even(metrics.heightPixels * scale)
+        // Multiples of 16: some older hardware encoders and GPUs scramble
+        // frames of other sizes.
+        fun aligned(value: Double) = max(16, (value.roundToInt() / 16) * 16)
+        return aligned(metrics.widthPixels * scale) to aligned(metrics.heightPixels * scale)
     }
 
     private fun preferH264(transceiver: RtpTransceiver) {
@@ -336,8 +355,9 @@ class ScreenShareSession(
         const val CAPTURE_FPS = 30
         const val MAX_CAPTURE_EDGE = 1920
         const val LOW_MEMORY_MAX_CAPTURE_EDGE = 1280
+        // Software VP8 on a slow tablet CPU needs a smaller picture to keep up.
+        const val COMPATIBILITY_MAX_CAPTURE_EDGE = 960
         const val LOW_MEMORY_CAPTURE_FPS = 24
-        const val LOW_MEMORY_THRESHOLD_BYTES = 2L * 1024 * 1024 * 1024
         const val CONNECT_TIMEOUT_MS = 20_000L
     }
 }
