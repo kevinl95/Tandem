@@ -1,5 +1,6 @@
 package com.kloeffler.tandem.sender
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjection
@@ -88,8 +89,11 @@ class ScreenShareSession(
         surfaceTextureHelper = helper
         capturer = screenCapturer
         screenCapturer.initialize(helper, context, source.capturerObserver)
-        val (width, height) = captureSize()
-        screenCapturer.startCapture(width, height, CAPTURE_FPS)
+        val lowMemory = isLowMemoryDevice()
+        val (width, height) = captureSize(if (lowMemory) LOW_MEMORY_MAX_CAPTURE_EDGE else MAX_CAPTURE_EDGE)
+        val fps = if (lowMemory) LOW_MEMORY_CAPTURE_FPS else CAPTURE_FPS
+        Log.i(TAG, "Capturing ${width}x$height at $fps fps (low memory: $lowMemory)")
+        screenCapturer.startCapture(width, height, fps)
 
         val configuration = PeerConnection.RTCConfiguration(emptyList()).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
@@ -186,7 +190,10 @@ class ScreenShareSession(
             }
 
             "pending" -> setState(ShareState.AWAITING_APPROVAL)
-            "decline" -> stop(ShareState.DECLINED)
+            // "ended" means the TV stopped a share it had accepted.
+            "decline" -> stop(
+                if (message.optString("reason") == "ended") ShareState.RECEIVER_LEFT else ShareState.DECLINED,
+            )
             "peer-left" -> stop(ShareState.RECEIVER_LEFT)
             "error" -> when (message.optString("reason")) {
                 "no-peer" -> stop(ShareState.NO_RECEIVER)
@@ -228,10 +235,18 @@ class ScreenShareSession(
         onState(newState)
     }
 
+    // Older Fire tablets have 1-1.5 GB of RAM and slow encoders; ask them for
+    // less so real-time encoding keeps up.
+    private fun isLowMemoryDevice(): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memory = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
+        return activityManager.isLowRamDevice || memory.totalMem < LOW_MEMORY_THRESHOLD_BYTES
+    }
+
     // Scale the display down so its long edge fits what the TV decodes smoothly.
-    private fun captureSize(): Pair<Int, Int> {
+    private fun captureSize(maxEdge: Int): Pair<Int, Int> {
         val metrics = context.resources.displayMetrics
-        val scale = minOf(1.0, MAX_CAPTURE_EDGE.toDouble() / max(metrics.widthPixels, metrics.heightPixels))
+        val scale = minOf(1.0, maxEdge.toDouble() / max(metrics.widthPixels, metrics.heightPixels))
         fun even(value: Double) = (value.roundToInt() / 2) * 2
         return even(metrics.widthPixels * scale) to even(metrics.heightPixels * scale)
     }
@@ -320,6 +335,9 @@ class ScreenShareSession(
         const val STREAM_ID = "tandem"
         const val CAPTURE_FPS = 30
         const val MAX_CAPTURE_EDGE = 1920
+        const val LOW_MEMORY_MAX_CAPTURE_EDGE = 1280
+        const val LOW_MEMORY_CAPTURE_FPS = 24
+        const val LOW_MEMORY_THRESHOLD_BYTES = 2L * 1024 * 1024 * 1024
         const val CONNECT_TIMEOUT_MS = 20_000L
     }
 }

@@ -394,6 +394,21 @@ class SignalingTest(unittest.TestCase):
 
         self.assertEqual(self.client.posts, [])
 
+    def test_callbacks_use_the_configured_endpoint_over_the_custom_domain(self):
+        callback_client = FakeManagementClient()
+        signaling._management_clients['https://abc123.execute-api.us-west-2.amazonaws.com/prod'] = callback_client
+        signaling.os.environ['CALLBACK_URL'] = 'https://abc123.execute-api.us-west-2.amazonaws.com/prod'
+        self.addCleanup(signaling.os.environ.pop, 'CALLBACK_URL', None)
+        connect_sender()
+
+        signaling.handler({
+            'requestContext': {**request_context('laptop', '$default'), 'domainName': 'signal.example.com'},
+            'body': json.dumps({'type': 'discover'}),
+        }, None)
+
+        self.assertEqual(callback_client.posts_to('laptop'), [{'type': 'receivers', 'receivers': []}])
+        self.assertEqual(self.client.posts, [])
+
     def test_disconnect_of_unknown_connection_is_a_no_op(self):
         self.assertEqual(disconnect('ghost')['statusCode'], 200)
 

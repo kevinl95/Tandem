@@ -12,6 +12,7 @@ import {
 
 const TEST_CONFIG = {
   signalingEndpoint: "wss://example.execute-api.us-west-2.amazonaws.com/prod",
+  siteUrl: "https://tandemscreen.com",
   stunServerUrl: "",
 };
 
@@ -55,6 +56,19 @@ test("vega assets load the receiver as a classic script and link the probe local
   assert.doesNotMatch(receiverHtml, /type="module"/);
   assert.match(receiverHtml, /href="\.\/probe\.html"/);
   assert.match(probeHtml, /href="\.\/index\.html"/);
+});
+
+test("release assets leave out the diagnostics page and its link", async (t) => {
+  const outDir = await mkdtemp(path.join(tmpdir(), "tandem-vega-release-"));
+  t.after(() => rm(outDir, { force: true, recursive: true }));
+  await buildVegaAssets({ config: TEST_CONFIG, outDir });
+
+  const written = await buildVegaAssets({ config: TEST_CONFIG, outDir, release: true });
+  const receiverHtml = await readFile(path.join(outDir, "index.html"), "utf8");
+
+  assert.deepEqual(written, ["index.html", RECEIVER_BUNDLE_NAME]);
+  assert.doesNotMatch(receiverHtml, /probe/);
+  await assert.rejects(readFile(path.join(outDir, "probe.html")), { code: "ENOENT" });
 });
 
 test("vega receiver page embeds config without letting it close the script tag", async (t) => {
@@ -127,6 +141,10 @@ test("receiver bundle runs without module imports and joins signaling with a sto
 
   assert.equal(elements["#session-code"].textContent, "K7P2QX");
   assert.equal(elements["#receiver-name"].textContent, "Fire TV K7P2QX");
+  assert.equal(
+    elements["#instructions"].textContent,
+    "On a computer on this WiFi, go to tandemscreen.com and pick this TV, or enter",
+  );
   assert.equal(sockets.length, 1);
   const socketUrl = new URL(sockets[0].url);
   assert.equal(socketUrl.searchParams.get("sessionId"), "K7P2QX");

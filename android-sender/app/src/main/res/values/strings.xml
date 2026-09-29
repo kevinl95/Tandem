@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Tandem</string>
+    <string name="app_name">Tandem Screen Share</string>
+    <!-- Launcher labels truncate past about 12 characters. -->
+    <string name="launcher_name">Tandem</string>
     <string name="tvs_heading">TVs on your network</string>
     <string name="looking_for_tvs">Looking for TVs…</string>
     <string name="no_tvs">No TVs found on this WiFi yet. Open Tandem on the TV, or enter its code below.</string>

@@ -28,6 +28,7 @@ const STATUS_MESSAGES = {
 const videoElement = document.querySelector("#receiver-video");
 const receiverNameElement = document.querySelector("#receiver-name");
 const sessionCodeElement = document.querySelector("#session-code");
+const instructionsElement = document.querySelector("#instructions");
 const statusElement = document.querySelector("#receiver-status");
 const tvActions = document.querySelector("#tv-actions");
 const manageDevicesButton = document.querySelector("#manage-devices");
@@ -47,6 +48,11 @@ const devices = createDeviceStore(globalThis.localStorage);
 // Set while a dialog is open; Back runs it.
 let onBack = null;
 
+// Asks the Vega app shell (App.tsx) to exit; a no-op in a desktop browser.
+function requestExit() {
+  globalThis.ReactNativeWebView?.postMessage(JSON.stringify({ type: "exit-app" }));
+}
+
 // The Vega build injects window.TANDEM_CONFIG; in a desktop browser pass
 // ?signaling=wss://... instead.
 function readConfig() {
@@ -55,6 +61,7 @@ function readConfig() {
 
   return {
     receiverName: params.get("name") ?? injected.receiverName ?? "",
+    siteUrl: params.get("site") ?? injected.siteUrl ?? "",
     signalingEndpoint: params.get("signaling") ?? injected.signalingEndpoint ?? "",
     stunServerUrl: params.get("stun") ?? injected.stunServerUrl ?? "",
   };
@@ -95,6 +102,15 @@ function loadReceiverSecret() {
     // Fall through to an unsaved secret.
   }
   return fresh;
+}
+
+// "https://tandemscreen.com" → "tandemscreen.com"; empty if not a URL.
+function siteHostname(siteUrl) {
+  try {
+    return siteUrl ? new URL(siteUrl).hostname : "";
+  } catch {
+    return "";
+  }
 }
 
 function setStatus(message, isProblem = false) {
@@ -236,6 +252,10 @@ function start() {
   const receiverName = config.receiverName || `Fire TV ${sessionCode}`;
   receiverNameElement.textContent = receiverName;
   sessionCodeElement.textContent = sessionCode;
+  const siteHost = siteHostname(config.siteUrl);
+  if (siteHost) {
+    instructionsElement.textContent = `On a computer on this WiFi, go to ${siteHost} and pick this TV, or enter`;
+  }
 
   if (!config.signalingEndpoint) {
     setStatus("No signaling endpoint configured. Run npm run deploy:signaling, then rebuild.", true);
@@ -267,13 +287,51 @@ function start() {
     },
   });
 
+  // Back steps out one level: close a dialog, then end a share, then exit.
+  function handleBack() {
+    if (onBack) {
+      onBack();
+    } else if (!receiver.endShare()) {
+      requestExit();
+    }
+  }
+
+  // Leaving the screen (Home, another app) ends any share, so no audio plays
+  // over the launcher, and disconnects, since connections are billed by the
+  // minute. Both can be called more than once.
+  function onBackground() {
+    receiver.endShare();
+    if (!receiver.isPaused) {
+      receiver.pauseSignaling();
+    }
+  }
+
+  function onForeground() {
+    if (receiver.isPaused) {
+      receiver.connectSignaling();
+    }
+  }
+
+  // The Vega shell calls these from its app-state listener; visibilitychange
+  // covers the same transitions if the WebView reports them.
+  globalThis.tandemHost = { handleBack, onBackground, onForeground };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      onBackground();
+    } else {
+      onForeground();
+    }
+  });
+
   document.addEventListener("keydown", (event) => {
     if (receiver.isPaused && event.keyCode === KEY_ENTER) {
       event.preventDefault();
       receiver.connectSignaling();
-    } else if ((event.keyCode === KEY_BACK || event.key === "Escape") && onBack) {
+    } else if ((event.keyCode === KEY_BACK || event.key === "Escape") && !globalThis.ReactNativeWebView) {
+      // In the Vega app the shell delivers Back through tandemHost.handleBack;
+      // this path is for desktop browsers during development.
       event.preventDefault();
-      onBack();
+      handleBack();
     } else if (event.keyCode === KEY_LEFT || event.keyCode === KEY_UP) {
       event.preventDefault();
       moveFocus(-1);

@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 
 /**
@@ -31,13 +32,11 @@ class ShareService : Service(), TandemController.Observer {
                     return START_NOT_STICKY
                 }
 
-                // Sending playback audio keeps WebRTC's microphone recorder
-                // running, which needs the microphone service type.
-                val includeAudio = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
-                    PackageManager.PERMISSION_GRANTED
-                val serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-                    (if (includeAudio) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
-                startForeground(NOTIFICATION_ID, buildNotification(), serviceType)
+                // Playback audio capture exists from Android 10; older devices
+                // share video only.
+                val includeAudio = Build.VERSION.SDK_INT >= 29 &&
+                    checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                startForegroundForShare(includeAudio)
                 // Observe only after starting, so ending a previous share
                 // doesn't stop the service; then catch an immediate failure.
                 TandemController.startShare(projectionData, sessionId, includeAudio)
@@ -55,7 +54,12 @@ class ShareService : Service(), TandemController.Observer {
         if (!TandemController.isSharing) {
             TandemController.removeObserver(this)
             TandemController.disconnectIfIdle()
-            stopForeground(STOP_FOREGROUND_REMOVE)
+            if (Build.VERSION.SDK_INT >= 24) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
             stopSelf()
         }
     }
@@ -66,33 +70,55 @@ class ShareService : Service(), TandemController.Observer {
         super.onDestroy()
     }
 
-    private fun buildNotification(): Notification {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW),
-        )
+    private fun startForegroundForShare(includeAudio: Boolean) {
+        val notification = buildNotification()
+        when {
+            // Sending playback audio keeps WebRTC's microphone recorder running,
+            // which Android 11+ only allows with the microphone service type.
+            Build.VERSION.SDK_INT >= 30 -> startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                    (if (includeAudio) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0),
+            )
+            Build.VERSION.SDK_INT >= 29 -> startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+            )
+            else -> startForeground(NOTIFICATION_ID, notification)
+        }
+    }
 
-        val openApp = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
+    @Suppress("DEPRECATION") // Pre-Android 8 notification and action builders.
+    private fun buildNotification(): Notification {
+        val immutable = if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
+        val openApp = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), immutable)
         val stop = PendingIntent.getService(
             this,
             1,
             Intent(this, ShareService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE,
+            immutable,
         )
 
-        return Notification.Builder(this, CHANNEL_ID)
+        val builder = if (Build.VERSION.SDK_INT >= 26) {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW),
+            )
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            Notification.Builder(this).setPriority(Notification.PRIORITY_LOW)
+        }
+
+        return builder
             .setSmallIcon(R.drawable.ic_tandem)
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(getString(R.string.notification_text))
             .setContentIntent(openApp)
             .setOngoing(true)
             .addAction(
-                Notification.Action.Builder(null, getString(R.string.stop_sharing), stop).build(),
+                Notification.Action.Builder(R.drawable.ic_tandem, getString(R.string.stop_sharing), stop).build(),
             )
             .build()
     }
@@ -106,12 +132,11 @@ class ShareService : Service(), TandemController.Observer {
         private const val NOTIFICATION_ID = 1
 
         fun start(context: Context, projectionData: Intent, sessionId: String) {
-            context.startForegroundService(
-                Intent(context, ShareService::class.java)
-                    .setAction(ACTION_START)
-                    .putExtra(EXTRA_PROJECTION_DATA, projectionData)
-                    .putExtra(EXTRA_SESSION_ID, sessionId),
-            )
+            val intent = Intent(context, ShareService::class.java)
+                .setAction(ACTION_START)
+                .putExtra(EXTRA_PROJECTION_DATA, projectionData)
+                .putExtra(EXTRA_SESSION_ID, sessionId)
+            if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
         }
 
         fun stop(context: Context) {
@@ -120,7 +145,7 @@ class ShareService : Service(), TandemController.Observer {
 
         @Suppress("DEPRECATION")
         private fun Intent.getParcelableExtraCompat(name: String): Intent? =
-            if (android.os.Build.VERSION.SDK_INT >= 33) getParcelableExtra(name, Intent::class.java)
+            if (Build.VERSION.SDK_INT >= 33) getParcelableExtra(name, Intent::class.java)
             else getParcelableExtra(name)
     }
 }

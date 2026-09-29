@@ -186,6 +186,7 @@ for (const [message, expectedState] of [
   [{ reason: "no-peer", type: "error" }, "no-receiver"],
   [{ reason: "rate-limited", type: "error" }, "rate-limited"],
   [{ from: "receiver", type: "peer-left" }, "receiver-left"],
+  [{ reason: "ended", type: "decline" }, "receiver-left"],
 ]) {
   test(`sender ends the share on ${JSON.stringify(message)}`, async (t) => {
     const { peerConnection, sender, socket, states, video } = await startShare(t);

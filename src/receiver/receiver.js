@@ -202,6 +202,23 @@ export class ScreenMirrorReceiver {
     }
   }
 
+  get hasShare() {
+    return this.peerConnection !== null;
+  }
+
+  // Ends the current share from the TV side (Back, or the app leaving the
+  // screen) and tells the sender, so it stops capturing right away.
+  endShare() {
+    if (!this.peerConnection) {
+      return false;
+    }
+
+    this.sendSignal({ reason: "ended", to: this.activeSenderId, type: "decline" });
+    this.resetPeerConnection();
+    this.onStateChange("waiting");
+    return true;
+  }
+
   sendSignal(message) {
     if (this.signalingSocket?.readyState === WebSocket.OPEN) {
       this.signalingSocket.send(JSON.stringify(message));

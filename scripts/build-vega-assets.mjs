@@ -3,7 +3,7 @@
 // The Vega WebView loads pages from file:///pkg/assets, where Chromium refuses
 // ES module scripts (opaque "null" origin), so the receiver modules are
 // flattened into a single classic script.
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -66,6 +66,8 @@ export async function loadReceiverConfig({ env = process.env } = {}) {
 
   return {
     signalingEndpoint: env.TANDEM_SIGNALING_URL ?? fileConfig.signalingEndpoint ?? "",
+    // Shown on the TV so people know where to open the sender.
+    siteUrl: env.TANDEM_SITE_URL ?? fileConfig.siteUrl ?? "",
     stunServerUrl: env.TANDEM_STUN_URL ?? fileConfig.stunServerUrl ?? "",
   };
 }
@@ -76,19 +78,24 @@ function inlineConfigScript(config) {
   return `<script>window.TANDEM_CONFIG = ${json};</script>`;
 }
 
-export async function buildVegaAssets({ outDir = DEFAULT_OUT_DIR, config } = {}) {
+const PROBE_LINK = '<a id="probe-link" href="../probe/">Run WebRTC diagnostics</a>';
+
+// Release builds leave out the WebRTC diagnostics page, which only helps
+// development and would confuse store reviewers.
+export async function buildVegaAssets({ outDir = DEFAULT_OUT_DIR, config, release = false } = {}) {
   await mkdir(outDir, { recursive: true });
   const receiverConfig = config ?? (await loadReceiverConfig());
 
-  const receiverHtml = replaceExactlyOnce(
-    replaceExactlyOnce(
-      await readFile(path.join(repoRoot, "public/receiver/index.html"), "utf8"),
-      '<script type="module" src="./app.js"></script>',
-      `${inlineConfigScript(receiverConfig)}\n    <script src="./${RECEIVER_BUNDLE_NAME}"></script>`,
-      "receiver index.html",
-    ),
-    'href="../probe/"',
-    'href="./probe.html"',
+  let receiverHtml = replaceExactlyOnce(
+    await readFile(path.join(repoRoot, "public/receiver/index.html"), "utf8"),
+    '<script type="module" src="./app.js"></script>',
+    `${inlineConfigScript(receiverConfig)}\n    <script src="./${RECEIVER_BUNDLE_NAME}"></script>`,
+    "receiver index.html",
+  );
+  receiverHtml = replaceExactlyOnce(
+    receiverHtml,
+    PROBE_LINK,
+    release ? "" : PROBE_LINK.replace('href="../probe/"', 'href="./probe.html"'),
     "receiver index.html",
   );
 
@@ -102,9 +109,15 @@ export async function buildVegaAssets({ outDir = DEFAULT_OUT_DIR, config } = {})
   const outputs = {
     "index.html": receiverHtml,
     [RECEIVER_BUNDLE_NAME]: await bundleReceiver(),
-    "probe.html": probeHtml,
-    "probe.js": await readFile(path.join(repoRoot, "public/probe/probe.js"), "utf8"),
   };
+  if (release) {
+    // The assets directory persists between builds; drop earlier debug files.
+    await rm(path.join(outDir, "probe.html"), { force: true });
+    await rm(path.join(outDir, "probe.js"), { force: true });
+  } else {
+    outputs["probe.html"] = probeHtml;
+    outputs["probe.js"] = await readFile(path.join(repoRoot, "public/probe/probe.js"), "utf8");
+  }
 
   await Promise.all(
     Object.entries(outputs).map(([name, contents]) =>
@@ -116,9 +129,11 @@ export async function buildVegaAssets({ outDir = DEFAULT_OUT_DIR, config } = {})
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const release = process.argv.includes("--release");
+  const outDir = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
   const config = await loadReceiverConfig();
-  const written = await buildVegaAssets({ outDir: process.argv[2], config });
-  console.log(`Wrote ${written.join(", ")} to ${process.argv[2] ?? DEFAULT_OUT_DIR}`);
+  const written = await buildVegaAssets({ outDir, config, release });
+  console.log(`Wrote ${written.join(", ")} to ${outDir ?? DEFAULT_OUT_DIR}${release ? " (release)" : ""}`);
   if (!config.signalingEndpoint) {
     console.warn("No signaling endpoint configured: run `npm run deploy:signaling` or set TANDEM_SIGNALING_URL.");
   }

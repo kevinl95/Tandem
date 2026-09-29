@@ -1,8 +1,10 @@
 schema-version = 1
 
 [package]
-title = "Tandem"
-version = "0.1.0"
+title = "Tandem Screen Share"
+# 512x512 PNG in assets/image, shown in Settings > Applications.
+icon = "@image/app_icon.png"
+version = "1.0.0"
 id = "com.kloeffler.tandem"
 
 [os.version]

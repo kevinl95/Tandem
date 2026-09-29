@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tandem Screen Share Privacy Policy</title>
+    <meta name="description" content="What data Tandem uses, why, and for how long." />
+    <meta name="theme-color" content="#111827" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <style>
+      body {
+        background: #111827;
+        color: #f9fafb;
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        margin: 0;
+        padding: 24px 16px 48px;
+      }
+
+      main {
+        margin: 0 auto;
+        max-width: 720px;
+      }
+
+      h1 {
+        margin: 0 0 4px;
+      }
+
+      h2 {
+        font-size: 20px;
+        margin: 32px 0 8px;
+      }
+
+      a {
+        color: #93c5fd;
+      }
+
+      .updated {
+        color: #9ca3af;
+        margin: 0 0 24px;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      table {
+        border-collapse: collapse;
+        font-size: 15px;
+        width: 100%;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid #374151;
+        padding: 10px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: #d1d5db;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Tandem Screen Share Privacy Policy</h1>
+      <p class="updated">Effective 27 September 2026</p>
+
+      <p>
+        Tandem Screen Share ("Tandem") shows a computer, phone or tablet screen on an Amazon Fire TV on the same Wi-Fi network. This
+        policy covers the Tandem Fire TV app, the Tandem Android app and the Tandem web app, and lists all the
+        data they use.
+      </p>
+
+      <h2>In short</h2>
+      <ul>
+        <li>
+          Your screen and its sound go directly from your device to your TV over your own network, encrypted. They
+          never pass through Tandem's servers.
+        </li>
+        <li>
+          To start a connection, a small server passes setup messages between your device and your TV. It keeps
+          the data listed below for a few hours at most. The one exception is the record that reserves a TV's
+          pairing code, which it keeps for 90 days.
+        </li>
+        <li>Tandem has no accounts, ads, analytics or tracking. We don't sell or share your data.</li>
+      </ul>
+
+      <h2>What the server handles</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Data</th>
+              <th scope="col">Why</th>
+              <th scope="col">How long</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>The public IP address of your TV and of the sharing device</td>
+              <td>To list only the TVs on your network, and to limit repeated share requests and code guessing</td>
+              <td>While connected, at most 3 hours. Abuse-limit counters: 10 minutes.</td>
+            </tr>
+            <tr>
+              <td>Your TV's name and pairing code</td>
+              <td>To show your TV in the list and route share requests to it</td>
+              <td>While the TV is connected, at most 3 hours</td>
+            </tr>
+            <tr>
+              <td>The sharing device's name and a random device ID created by the app</td>
+              <td>To show who wants to share on the TV, and to let your TV remember devices you allowed</td>
+              <td>While connected, at most 3 hours</td>
+            </tr>
+            <tr>
+              <td>A one-way hash of a secret your TV creates, stored with its pairing code</td>
+              <td>To stop other devices from posing as your TV</td>
+              <td>90 days after your TV last connects</td>
+            </tr>
+            <tr>
+              <td>
+                Connection setup messages (WebRTC offers, answers and network candidates, which include your
+                devices' addresses on your local network)
+              </td>
+              <td>Passed between your device and TV so they can connect directly</td>
+              <td>Not stored. The server forwards them immediately.</td>
+            </tr>
+            <tr>
+              <td>Server error logs (pairing codes and internal connection IDs, no IP addresses)</td>
+              <td>To diagnose failures</td>
+              <td>14 days</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Records are deleted when a device disconnects. Records a disconnect misses expire after the time shown and
+        are never used again. The database then removes expired records automatically, usually within a few days.
+      </p>
+
+      <h2>What stays on your devices</h2>
+      <ul>
+        <li>
+          <strong>Fire TV app:</strong> the TV's pairing code, its secret, and the names and device IDs of devices you
+          allowed or blocked. To remove the device list, open <em>Allowed devices</em> and choose
+          <em>Forget all</em>. Uninstalling the app or clearing its data removes everything.
+        </li>
+        <li>
+          <strong>Web app:</strong> a random device ID, the device name shown on the TV, and the server address, in
+          your browser's storage. Clearing site data removes them.
+        </li>
+        <li><strong>Android app:</strong> a random device ID. Uninstalling the app removes it.</li>
+      </ul>
+
+      <h2>Android app permissions</h2>
+      <ul>
+        <li>
+          <strong>Screen capture:</strong> used only after you start a share and accept Android's prompt. Capture
+          stops when you stop sharing.
+        </li>
+        <li>
+          <strong>Microphone</strong> (Android 10 and later): Android requires this permission for an app to capture
+          other apps' sound. Tandem never sends microphone audio. It replaces every microphone recording with the
+          sound your device is playing, or with silence. If you deny the permission, Tandem shares video only.
+        </li>
+        <li><strong>Notifications:</strong> to show that a share is running, with a Stop button.</li>
+      </ul>
+
+      <h2>Service providers</h2>
+      <p>
+        The server and the web app run on Amazon Web Services (AWS) in the US West (Oregon) region, which processes
+        the data above on Tandem's behalf. The web app is delivered through Amazon CloudFront, with access logging
+        turned off.
+      </p>
+
+      <h2>Children</h2>
+      <p>
+        Tandem is not directed at children under 13, and it doesn't knowingly collect personal information from
+        them.
+      </p>
+
+      <h2>Your choices</h2>
+      <p>
+        You can remove the data on your devices as described above. Data on the server expires on its own within
+        the times listed. For questions or requests about your data, email
+        <a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a>.
+      </p>
+
+      <h2>Changes</h2>
+      <p>If this policy changes, we'll update this page and its effective date.</p>
+    </main>
+  </body>
+</html>

@@ -9,7 +9,9 @@
     "build:vega-assets": "node scripts/build-vega-assets.mjs",
     "sync:lambda": "node scripts/sync-lambda.mjs",
     "deploy:signaling": "scripts/deploy-signaling.sh",
-    "smoke:signaling": "node scripts/smoke-signaling.mjs"
+    "smoke:signaling": "node scripts/smoke-signaling.mjs",
+    "build:site": "node scripts/build-site.mjs",
+    "deploy": "scripts/deploy-signaling.sh"
   },
   "repository": {
     "type": "git",

@@ -240,6 +240,8 @@ export class TandemSender {
         }
       } else if (message.type === "pending") {
         this.onStateChange("awaiting-approval");
+      } else if (message.type === "decline" && message.reason === "ended") {
+        this.stopSharing("receiver-left");
       } else if (message.type === "decline") {
         this.stopSharing("declined", message.reason === "busy"
           ? "The TV is busy with another request. Try again in a moment."

@@ -3,7 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tandem Sender</title>
+    <title>Tandem Screen Share</title>
+    <meta name="description" content="Share your screen to a Fire TV on the same WiFi." />
+    <meta name="theme-color" content="#111827" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <style>
       body {
         background: #111827;
@@ -129,6 +134,21 @@
         color: #fca5a5;
       }
 
+      .notice {
+        background: #1f2937;
+        border-radius: 12px;
+        margin: 0;
+        padding: 16px;
+      }
+
+      .notice[hidden] {
+        display: none;
+      }
+
+      a {
+        color: #93c5fd;
+      }
+
       details {
         display: grid;
         gap: 12px;
@@ -172,7 +192,11 @@
   </head>
   <body>
     <main>
-      <h1>Tandem</h1>
+      <h1>Tandem Screen Share</h1>
+
+      <p id="capture-unsupported" class="notice" role="status" hidden>
+        This browser can't share its screen. Phone and tablet browsers don't allow it, so use a desktop browser, or the Android app on Android phones and Fire tablets.
+      </p>
 
       <section aria-labelledby="tv-heading">
         <h2 id="tv-heading">TVs on your network</h2>
@@ -203,6 +227,10 @@
         <dl id="stats"></dl>
       </section>
 
+      <p id="android-app" class="notice" hidden>
+        On an Android phone or Fire tablet? <a id="android-app-link" href="#">Download the Tandem Screen Share app</a> (Android 5.1 or newer; allow installs from unknown sources).
+      </p>
+
       <details id="settings">
         <summary>Settings</summary>
         <label>
@@ -214,6 +242,8 @@
           <input id="signaling-endpoint" placeholder="wss://example.execute-api.us-west-2.amazonaws.com/prod" />
         </label>
       </details>
+
+      <p><a href="privacy.html">Privacy</a></p>
     </main>
 
     <script type="module" src="./app.js"></script>

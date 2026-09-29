@@ -56,8 +56,40 @@ test("cloudformation stage auto-deploys route changes and is throttled", () => {
   assert.ok(stage.DefaultRouteSettings.ThrottlingBurstLimit);
 });
 
-test("cloudformation template exports websocket endpoint", () => {
-  assert.match(template.Outputs.SignalingWebSocketUrl.Value["Fn::Sub"], /^wss:\/\//);
+test("cloudformation template exports the websocket endpoint, on the custom domain when set", () => {
+  const [condition, withDomain, withoutDomain] = template.Outputs.SignalingWebSocketUrl.Value["Fn::If"];
+
+  assert.equal(condition, "HasDomain");
+  assert.equal(withDomain["Fn::Sub"], "wss://signal.${DomainName}");
+  assert.match(withoutDomain["Fn::Sub"], /^wss:\/\/\$\{SignalingApi\}\.execute-api/);
+});
+
+test("the custom domain is optional and wires signaling, the web app and DNS together", () => {
+  const resources = template.Resources;
+  const domainResources = Object.entries(resources).filter(([, resource]) => resource.Condition);
+
+  assert.equal(template.Parameters.DomainName.Default, "");
+  for (const [name, resource] of domainResources) {
+    assert.ok(["HasDomain", "HasSiteDomain", "HasAlertEmail"].includes(resource.Condition), name);
+  }
+  assert.equal(resources.SignalingDomain.Properties.DomainNameConfigurations[0].EndpointType, "REGIONAL");
+  assert.equal(resources.SiteApexARecord.Properties.AliasTarget.HostedZoneId, "Z2FDTNDATAQYW2");
+  assert.equal(resources.SiteWwwAAAARecord.Properties.Type, "AAAA");
+
+  const viewerCertificate = resources.SiteDistribution.Properties.DistributionConfig.ViewerCertificate["Fn::If"];
+  assert.equal(viewerCertificate[0], "HasSiteDomain");
+  assert.equal(viewerCertificate[1].SslSupportMethod, "sni-only");
+  assert.deepEqual(viewerCertificate[2], { CloudFrontDefaultCertificate: true });
+});
+
+test("the web app's CSP also allows the custom signaling host", () => {
+  const csp = template.Resources.SiteResponseHeaders.Properties.ResponseHeadersPolicyConfig
+    .SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy["Fn::Join"][1];
+  const connect = csp.find((directive) => typeof directive === "object")["Fn::Join"][1];
+
+  assert.deepEqual(connect[2], {
+    "Fn::If": ["HasDomain", { "Fn::Sub": "wss://signal.${DomainName}" }, { Ref: "AWS::NoValue" }],
+  });
 });
 
 test("cloudformation template scopes API Gateway invoke permission to the signaling API stage", () => {
@@ -85,4 +117,53 @@ test("cloudformation template bounds spend", () => {
   assert.equal(template.Parameters.ThrottlingRateLimit.Default, 200);
   assert.equal(template.Resources.SpendBudget.Condition, "HasAlertEmail");
   assert.equal(template.Parameters.AlertEmail.Default, "");
+});
+
+test("sender web app is served privately from S3 through CloudFront over HTTPS", () => {
+  const bucket = template.Resources.SiteBucket.Properties;
+  const distribution = template.Resources.SiteDistribution.Properties.DistributionConfig;
+  const policy = template.Resources.SiteBucketPolicy.Properties.PolicyDocument.Statement[0];
+
+  assert.deepEqual(Object.values(bucket.PublicAccessBlockConfiguration), [true, true, true, true]);
+  assert.equal(distribution.DefaultCacheBehavior.ViewerProtocolPolicy, "redirect-to-https");
+  assert.deepEqual(distribution.Origins[0].OriginAccessControlId, {
+    "Fn::GetAtt": ["SiteOriginAccessControl", "Id"],
+  });
+  assert.equal(policy.Principal.Service, "cloudfront.amazonaws.com");
+  assert.ok(policy.Condition.StringEquals["AWS:SourceArn"]);
+});
+
+test("sender web app may only connect to itself and the signaling API", () => {
+  const headers = template.Resources.SiteResponseHeaders.Properties.ResponseHeadersPolicyConfig;
+  const csp = headers.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy["Fn::Join"][1];
+  const connect = csp.find((directive) => typeof directive === "object");
+
+  assert.ok(csp.includes("default-src 'self'"));
+  assert.ok(csp.includes("script-src 'self'"));
+  assert.equal(connect["Fn::Join"][1][0], "connect-src 'self'");
+  assert.match(connect["Fn::Join"][1][1]["Fn::Sub"], /^wss:\/\/\$\{SignalingApi\}\.execute-api/);
+  assert.match(headers.CustomHeadersConfig.Items[0].Value, /display-capture=\(self\)/);
+});
+
+// The privacy policy promises this: Lambda logs are kept 14 days, and neither
+// API Gateway nor CloudFront keeps access logs.
+test("logs are short-lived and no access logs are kept", () => {
+  const logGroup = template.Resources.SignalingLogGroup.Properties;
+  const distribution = template.Resources.SiteDistribution.Properties.DistributionConfig;
+
+  assert.equal(logGroup.RetentionInDays, 14);
+  assert.deepEqual(template.Resources.SignalingFunction.Properties.LoggingConfig.LogGroup, {
+    Ref: "SignalingLogGroup",
+  });
+  assert.equal(template.Resources.Stage.Properties.AccessLogSettings, undefined);
+  assert.equal(distribution.Logging, undefined);
+});
+
+test("the Lambda messages clients through the execute-api endpoint, not the custom domain", () => {
+  const variables = template.Resources.SignalingFunction.Properties.Environment.Variables;
+
+  assert.equal(
+    variables.CALLBACK_URL["Fn::Sub"],
+    "https://${SignalingApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}",
+  );
 });

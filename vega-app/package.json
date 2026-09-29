@@ -1,6 +1,6 @@
 {
   "name": "@amazon-devices/tandemreceiver",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "files": ["dist"],
   "scripts": {
@@ -11,9 +11,9 @@
     "lint": "eslint src test --ext .ts,.tsx",
     "lint:fix": "eslint src test --ext .ts,.tsx --fix",
     "sync:web": "node ../scripts/build-vega-assets.mjs",
-    "prebuild:release": "npm run sync:web",
+    "prebuild:release": "npm run sync:web -- --release",
     "prebuild:debug": "npm run sync:web",
-    "build:release": "react-native build-vega --build-type Release",
+    "build:release": "react-native build-vega --build-type Release --build-version 1.0.0 --build-number 1",
     "build:debug": "react-native build-vega --build-type Debug",
     "build:app": "npm-run-all build:release",
     "build": "npm-run-all build:release",

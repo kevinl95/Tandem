@@ -6,6 +6,11 @@ const CLIENT_ID_STORAGE_KEY = "tandem.clientId";
 const DEVICE_NAME_STORAGE_KEY = "tandem.deviceName";
 // Each discovery is a billed round trip; refresh only while the page is visible.
 const DISCOVERY_INTERVAL_MS = 15000;
+// Written by `npm run deploy:signaling`. The hosted site serves it as
+// config.json next to this page; scripts/build-site.mjs rewrites this path.
+const CONFIG_URL = "../../tandem.config.json";
+// Phone and tablet browsers don't implement screen capture.
+const canCapture = typeof navigator.mediaDevices?.getDisplayMedia === "function";
 const STATS_INTERVAL_MS = 2000;
 const STATUS_MESSAGES = {
   offering: ["Contacting the TV…"],
@@ -90,25 +95,23 @@ function defaultDeviceName() {
   return `${browser} on ${platform}`;
 }
 
-// Endpoint precedence: ?signaling=, then the last one used here, then the
-// tandem.config.json written by `npm run deploy:signaling`.
-async function loadEndpoint() {
-  const fromQuery = new URLSearchParams(location.search).get("signaling");
-  if (fromQuery) {
-    return fromQuery;
-  }
-
-  const stored = readStorage(ENDPOINT_STORAGE_KEY);
-  if (stored) {
-    return stored;
-  }
-
+async function loadConfig() {
   try {
-    const response = await fetch("../../tandem.config.json");
-    return response.ok ? (await response.json()).signalingEndpoint ?? "" : "";
+    const response = await fetch(CONFIG_URL, { cache: "no-cache" });
+    return response.ok ? await response.json() : {};
   } catch {
-    return "";
+    return {};
   }
+}
+
+// Endpoint precedence: ?signaling=, then the deployed config, then the last
+// one used here (for local testing without a config file).
+function chooseEndpoint(config) {
+  return (
+    new URLSearchParams(location.search).get("signaling") ||
+    config.signalingEndpoint ||
+    readStorage(ENDPOINT_STORAGE_KEY)
+  );
 }
 
 function setStatus(state, detail) {
@@ -122,7 +125,7 @@ function renderReceivers() {
     ...receivers.map(({ name, sessionId }) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.disabled = isSharing;
+      button.disabled = isSharing || !canCapture;
       const label = document.createElement("span");
       label.textContent = name;
       const code = document.createElement("span");
@@ -186,7 +189,7 @@ async function renderStats() {
 function setSharing(sharing) {
   isSharing = sharing;
   stopButton.hidden = !sharing;
-  shareCodeButton.disabled = sharing;
+  shareCodeButton.disabled = sharing || !canCapture;
   codeInput.disabled = sharing;
   statsSection.hidden = !sharing;
   renderReceivers();
@@ -312,8 +315,21 @@ endpointInput.addEventListener("change", () => {
   }
 });
 
+const config = await loadConfig();
+if (config.apkUrl) {
+  document.querySelector("#android-app-link").href = config.apkUrl;
+  document.querySelector("#android-app").hidden = false;
+}
+document.querySelector("#capture-unsupported").hidden = canCapture;
+shareCodeButton.disabled = !canCapture;
+
+// Installable app (PWA) on the hosted site; skipped on local http:// testing.
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("sw.js").catch((error) => console.warn("Service worker:", error));
+}
+
 deviceNameInput.value = readStorage(DEVICE_NAME_STORAGE_KEY) || defaultDeviceName();
-endpointInput.value = await loadEndpoint();
+endpointInput.value = chooseEndpoint(config);
 await connect();
 setInterval(() => {
   if (!isSharing && document.visibilityState === "visible") {

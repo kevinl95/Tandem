@@ -1,0 +1,34 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Tandem: TLS certificate for the sender web app's custom domain. CloudFront only uses certificates from us-east-1, so deploy this stack there; it validates through DNS in the Route 53 hosted zone.",
+  "Parameters": {
+    "DomainName": {
+      "Type": "String",
+      "AllowedPattern": "^[a-z0-9.-]+\\.[a-z]{2,}$",
+      "Description": "Apex domain, e.g. tandemscreen.com. The certificate also covers www."
+    },
+    "HostedZoneId": {
+      "Type": "AWS::Route53::HostedZone::Id",
+      "Description": "Route 53 hosted zone for the domain."
+    }
+  },
+  "Resources": {
+    "SiteCertificate": {
+      "Type": "AWS::CertificateManager::Certificate",
+      "Properties": {
+        "DomainName": { "Ref": "DomainName" },
+        "SubjectAlternativeNames": [{ "Fn::Sub": "www.${DomainName}" }],
+        "ValidationMethod": "DNS",
+        "DomainValidationOptions": [
+          { "DomainName": { "Ref": "DomainName" }, "HostedZoneId": { "Ref": "HostedZoneId" } },
+          { "DomainName": { "Fn::Sub": "www.${DomainName}" }, "HostedZoneId": { "Ref": "HostedZoneId" } }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "SiteCertificateArn": {
+      "Value": { "Ref": "SiteCertificate" }
+    }
+  }
+}

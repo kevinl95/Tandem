@@ -93,11 +93,12 @@ class MainActivity : Activity(), TandemController.Observer {
         requestCapture(code)
     }
 
-    // Ask for audio first (once); sharing continues video-only if it's refused.
+    // Ask for audio first (once) where playback capture exists (Android 10+);
+    // sharing continues video-only if it's refused.
     private fun requestCapture(sessionId: String) {
         pendingSessionId = sessionId
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED &&
-            !askedForAudio
+        if (Build.VERSION.SDK_INT >= 29 && !askedForAudio &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
         ) {
             askedForAudio = true
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO)
@@ -112,7 +113,7 @@ class MainActivity : Activity(), TandemController.Observer {
     }
 
     private fun launchCapturePrompt() {
-        val projectionManager = getSystemService(MediaProjectionManager::class.java)
+        val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         @Suppress("DEPRECATION")
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_CAPTURE)
     }
@@ -168,9 +169,16 @@ class MainActivity : Activity(), TandemController.Observer {
     // VPNs usually route LAN traffic through the tunnel or block it, which
     // breaks both discovery (a different public IP) and the direct connection.
     private fun isVpnActive(): Boolean {
-        val connectivity = getSystemService(ConnectivityManager::class.java)
-        val capabilities = connectivity.getNetworkCapabilities(connectivity.activeNetwork) ?: return false
-        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val networks = if (Build.VERSION.SDK_INT >= 23) {
+            listOfNotNull(connectivity.activeNetwork)
+        } else {
+            @Suppress("DEPRECATION") // activeNetwork arrived in Android 6.
+            connectivity.allNetworks.toList()
+        }
+        return networks.any {
+            connectivity.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+        }
     }
 
     private fun statusMessage(state: ShareState, vpnActive: Boolean): Int = when (state) {

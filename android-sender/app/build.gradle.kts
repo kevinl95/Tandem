@@ -19,9 +19,10 @@ android {
 
     defaultConfig {
         applicationId = "com.kloeffler.tandem.sender"
-        // Android 10 is the first release with a media-projection foreground
-        // service type and playback audio capture.
-        minSdk = 29
+        // Android 5.1 (Fire OS 5), so Fire tablets that can't send Miracast
+        // can share. Playback audio capture needs Android 10, so older
+        // devices share video only.
+        minSdk = 22
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"

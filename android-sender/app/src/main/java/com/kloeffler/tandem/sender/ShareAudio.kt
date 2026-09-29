@@ -1,11 +1,13 @@
 package com.kloeffler.tandem.sender
 
 import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.projection.MediaProjection
+import android.os.Build
 import android.util.Log
 import org.webrtc.audio.AudioRecordDataCallback
 import java.nio.ByteBuffer
@@ -45,10 +47,15 @@ object ShareAudio : AudioRecordDataCallback {
         val length = target.capacity()
         if (scratch.size < length) scratch = ByteArray(length)
 
-        val record = playbackRecordFor(audioFormat, channelCount, sampleRate)
-        // Non-blocking, so a quiet phone (nothing playing) can't stall WebRTC's
-        // audio thread; missing samples become silence.
-        val read = record?.read(scratch, 0, length, AudioRecord.READ_NON_BLOCKING)?.coerceAtLeast(0) ?: 0
+        // Playback capture exists from Android 10; before that, only silence.
+        val read = if (Build.VERSION.SDK_INT >= 29) {
+            // Non-blocking, so a quiet phone (nothing playing) can't stall
+            // WebRTC's audio thread; missing samples become silence.
+            playbackRecordFor(audioFormat, channelCount, sampleRate)
+                ?.read(scratch, 0, length, AudioRecord.READ_NON_BLOCKING)?.coerceAtLeast(0) ?: 0
+        } else {
+            0
+        }
         scratch.fill(0, read, length)
         target.put(scratch, 0, length)
     }
@@ -56,6 +63,7 @@ object ShareAudio : AudioRecordDataCallback {
     // Created lazily on the audio thread so it matches the format WebRTC's
     // microphone recorder chose.
     @SuppressLint("MissingPermission") // Only started after RECORD_AUDIO is granted.
+    @TargetApi(29)
     private fun playbackRecordFor(audioFormat: Int, channelCount: Int, sampleRate: Int): AudioRecord? {
         val activeProjection = projection ?: return null
         val format = Triple(audioFormat, channelCount, sampleRate)

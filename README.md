@@ -1,6 +1,6 @@
 # Tandem
 
-The new Vega OS Fire TV sticks don't support Miracast, so there's no built-in way to mirror a phone or laptop to them. Tandem mirrors a screen to a Vega Fire TV over the local network:
+Tandem mirrors a screen to an Amazon Vega Fire TV over the local network. The Fire TV supports Miracast, but many devices can't send it, including Fire tablets from before 2022 and most laptops. Tandem works from any desktop browser and from an Android app:
 
 - **Sender → WebRTC → Vega receiver**, with media flowing directly over the LAN
 - **AWS signaling** (API Gateway WebSocket, Lambda, DynamoDB) only relays offers, answers and ICE candidates
@@ -10,7 +10,7 @@ The new Vega OS Fire TV sticks don't support Miracast, so there's no built-in wa
 ## Repository layout
 
 - `/public/receiver` – TV receiver page (pairing code, full-screen video)
-- `/public/sender` – desktop browser sender page
+- `/public/sender` – sender web app (installable PWA), hosted on S3 + CloudFront
 - `/android-sender` – Android sender app (MediaProjection + WebRTC), sideloaded as an APK
 - `/public/probe` – WebRTC capability probe
 - `/src/receiver`, `/src/sender` – WebRTC and signaling logic
@@ -33,17 +33,22 @@ Session, role and sender identity always come from the server's connection recor
 ## Try it end to end
 
 ```bash
-npm run deploy:signaling     # deploys the stack, writes tandem.config.json
+TANDEM_CONTACT_EMAIL=you@example.com npm run deploy   # deploys the stack, uploads the web app, prints its URL
 npm run smoke:signaling      # checks the deployed relay with fake TV and sender clients
 
 cd vega-app && npm run build:debug \
   && vega run-app build/armv7-debug/tandemreceiver_armv7.vpkg   # TV shows a code
-
-cd .. && python3 -m http.server 8080
-# In desktop Chrome on the same WiFi: http://localhost:8080/public/sender/
 ```
 
-The sender page reads the endpoint from `tandem.config.json` and shows the selected ICE path, resolution, frame rate, codec and bitrate while sharing.
+Then open the printed `https://….cloudfront.net` URL in a desktop browser on the same WiFi. Chrome and Edge offer to install it as an app. While sharing, the page shows the selected ICE path, resolution, frame rate, codec and bitrate.
+
+For local development, `python3 -m http.server 8080` in the repo root serves the page at `http://localhost:8080/public/sender/`. Browsers only allow screen capture on HTTPS or `localhost`, which is why other people need the hosted URL.
+
+## Sender web app hosting
+
+The same stack serves the sender as a static site: a private S3 bucket that only its CloudFront distribution can read (Origin Access Control), over HTTPS. `npm run deploy` builds it with `scripts/build-site.mjs`, which copies the page and its modules, writes `config.json` with the signaling endpoint, and adds the Android APK at `downloads/tandem.apk` if one has been built. It then uploads the site and invalidates the CloudFront cache. The site includes the privacy policy at `/privacy.html`, which lists `TANDEM_CONTACT_EMAIL` as the contact; the deploy stops if that variable isn't set, so the placeholder can't be published. The policy states retention times the template enforces: connection records expire after 3 hours, code claims after 90 days, Lambda logs after 14 days, and neither API Gateway nor CloudFront keeps access logs. A test checks the template against those promises.
+
+CloudFront adds security headers. The Content-Security-Policy allows scripts only from the site and connections only to the site and the signaling WebSocket. `Permissions-Policy` allows screen capture on the page and turns off camera, microphone and location. The site is a PWA (manifest, icons and a network-first service worker), so desktop browsers can install it. Phone and tablet browsers can't capture the screen even when installed, so the page tells them so and links to the APK. At about 60 KB a visit, hosting stays within CloudFront's always-free allowance (1 TB and 10 million requests a month).
 
 Mobile browsers can't capture the screen (`getDisplayMedia` isn't supported on Chrome for Android or iOS Safari), so phones use the Android app below.
 
@@ -57,9 +62,9 @@ JAVA_HOME=/path/to/jdk-21 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The APK is sideloaded; there's no store listing.
+The APK is sideloaded; there's no store listing. It runs on Android 5.1 (API 22) and newer, which covers Fire tablets back to Fire OS 5. Fire OS has no Google Play, and the app doesn't need it: turn on "Apps from unknown sources" and install the APK. On devices with less than 2 GB of RAM, or ones Android marks as low-RAM, the app captures at 1280 px on the long edge and 24 fps instead of 1920 px and 30 fps, so older tablets can keep up with real-time encoding. Tandem hasn't been tested on a pre-2022 Fire tablet yet.
 
-**Audio** (Android 10+): The app sends the phone's media playback, using Android playback capture. Calls, notifications and apps that opt out of capture (typically DRM streaming apps) aren't included. WebRTC's Android audio pipeline is paced by a microphone recorder, so the app needs the microphone permission and shows the mic indicator while sharing. It overwrites every recorded buffer with playback audio or silence, so microphone audio is never sent. If the permission is denied, sharing continues video-only. This relies on `stream-webrtc-android` 1.1.3; later releases no longer call the record-data callback.
+**Audio** (Android 10+; older devices share video only): The app sends the phone's media playback, using Android playback capture. Calls, notifications and apps that opt out of capture (typically DRM streaming apps) aren't included. WebRTC's Android audio pipeline is paced by a microphone recorder, so the app needs the microphone permission and shows the mic indicator while sharing. It overwrites every recorded buffer with playback audio or silence, so microphone audio is never sent. If the permission is denied, sharing continues video-only. This relies on `stream-webrtc-android` 1.1.3; later releases no longer call the record-data callback. The trade-off is that 1.1.3's arm64 native library isn't aligned for 16 KB memory pages, so it may fail to load on newer Android 15+ phones that use them.
 
 **VPNs:** A phone on a VPN reaches AWS from the VPN's IP, so TVs on its WiFi aren't listed (enter the code instead). An always-on VPN that blocks non-VPN traffic also blocks the direct LAN connection to the TV, and the share fails. Allow local network (LAN) access in the VPN app, or exclude Tandem from the tunnel. The app shows a hint when a VPN is active.
 
@@ -72,6 +77,18 @@ The APK is sideloaded; there's no store listing.
 - **Throttling** at the API Gateway stage caps total message rate.
 - Discovery only lists TVs sharing the sender's public IP. Anyone on the same network, including a shared or carrier-grade NAT, can see those TVs, but approval still gates sharing.
 
+## Custom domain
+
+Set `TANDEM_DOMAIN` to a domain whose hosted zone is in Route 53:
+
+```bash
+TANDEM_DOMAIN=tandemscreen.com TANDEM_CONTACT_EMAIL=support@tandemscreen.com npm run deploy
+```
+
+Signaling then runs at `wss://signal.<domain>` and the web app at `https://<domain>` (and `www`). The TV's pairing screen shows the domain so people know where to go. CloudFront only accepts certificates from us-east-1, so the deploy first creates `<stack>-site-certificate` there (`infra/cloudformation/site-certificate.json`). The signaling certificate is created in the main stack, and both validate through DNS automatically.
+
+Build the Vega and Android apps against the custom domain before releasing them. The signaling endpoint is compiled into both, so if it's a domain you control, you can rebuild or move the backend later without breaking installed apps. The execute-api URL keeps working for older builds.
+
 ## Costs
 
 AWS only relays signaling, and media never touches it. There's deliberately no TURN server, because it would bill for every relayed gigabyte of video. The costs come from open connections and messages. At list prices (US regions, 2026), that's $0.25 per million connection-minutes and $1 per million messages, plus a Lambda invocation and DynamoDB access per relayed message. The design keeps both low:
@@ -81,7 +98,7 @@ AWS only relays signaling, and media never touches it. There's deliberately no T
 - Senders refresh discovery every 15 seconds, and only while visible.
 - Failed TV reconnects back off exponentially, up to one minute apart.
 
-**Worst-case ceilings:** The stage throttle (default 200 messages/s, about $520 a month even if saturated), the Lambda's reserved concurrency (default 50) and an optional AWS Budgets alert. For the alert, deploy with `TANDEM_ALERT_EMAIL=you@example.com npm run deploy:signaling`; `TANDEM_BUDGET_USD` sets the monthly amount (default 25). `TANDEM_THROTTLE_RATE` and `TANDEM_THROTTLE_BURST` override the throttle (defaults 200 and 400).
+**Worst-case ceilings:** The stage throttle (default 200 messages/s, about $520 a month even if saturated), the Lambda's reserved concurrency (default 50) and an optional AWS Budgets alert. For the alert, also set `TANDEM_ALERT_EMAIL=you@example.com` when deploying; `TANDEM_BUDGET_USD` sets the monthly amount (default 25). `TANDEM_THROTTLE_RATE` and `TANDEM_THROTTLE_BURST` override the throttle (defaults 200 and 400).
 
 ## AWS signaling stack
 

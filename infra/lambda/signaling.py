@@ -57,7 +57,10 @@ def get_table():
 
 
 def get_management_client(domain_name, stage):
-    endpoint_url = f'https://{domain_name}/{stage}'
+    # Messages to clients must go through the API's own execute-api endpoint.
+    # With a custom domain, the request context names that domain instead,
+    # and callbacks through it are denied, so the stack passes the endpoint in.
+    endpoint_url = os.environ.get('CALLBACK_URL') or f'https://{domain_name}/{stage}'
     if endpoint_url not in _management_clients:
         import boto3
 

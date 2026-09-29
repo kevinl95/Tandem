@@ -203,6 +203,24 @@ test("receiver resets when the active sender leaves but not when another does", 
   assert.equal(FakePeerConnection.instances[1].remoteDescription.sdp, "offer-from-desktop");
 });
 
+test("the TV can end a share and tells the sender why", async (t) => {
+  const { receiver, socket, states, video } = startReceiver(t, { trusted: ["client-laptop"] });
+
+  assert.equal(receiver.endShare(), false, "nothing to end yet");
+
+  socket.receive(offerFrom("laptop"));
+  await flushAsync();
+  FakePeerConnection.instances[0].setConnectionState("connected");
+  video.srcObject = "stream";
+
+  assert.equal(receiver.endShare(), true);
+  assert.equal(FakePeerConnection.instances[0].closed, true);
+  assert.equal(video.srcObject, null);
+  assert.equal(receiver.hasShare, false);
+  assert.equal(states.at(-1), "waiting");
+  assert.deepEqual(socket.sent.at(-1), { reason: "ended", to: "laptop", type: "decline" });
+});
+
 test("receiver returns to waiting when the peer connection fails", async (t) => {
   const { socket, states } = startReceiver(t, { trusted: ["client-laptop"] });
 
