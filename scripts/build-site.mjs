@@ -12,7 +12,7 @@ import path from "node:path";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 export const DEFAULT_OUT_DIR = path.join(repoRoot, "dist", "site");
-// The signed release build when it exists (see README: Android release
+// The signed release build when it exists (see docs/android.md: Release
 // signing), otherwise the debug build.
 const RELEASE_APK = path.join(repoRoot, "android-sender/app/build/outputs/apk/release/app-release.apk");
 const DEBUG_APK = path.join(repoRoot, "android-sender/app/build/outputs/apk/debug/app-debug.apk");
