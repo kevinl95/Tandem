@@ -1,6 +1,7 @@
 // Assembles the hosted sender site (a PWA) into dist/site for S3/CloudFront:
 //
-//   index.html, app.js, sw.js, manifest.webmanifest, icons/   from public/sender
+//   index.html, app.js, sw.js, manifest.webmanifest, icons/,
+//   badges/                                                  from public/sender
 //   privacy.html                                             with the contact email filled in
 //   src/receiver/config.js, src/sender/sender.js             ES modules it imports
 //   config.json                                              signaling endpoint (+ APK link)
@@ -73,8 +74,12 @@ export async function buildSite({
   }
   const privacy = await readFile(path.join(senderDir, "privacy.html"), "utf8");
   await writeFile(path.join(outDir, "privacy.html"), privacy.replaceAll("{{CONTACT_EMAIL}}", contactEmail));
-  for (const icon of await readdir(path.join(senderDir, "icons"))) {
-    await copyFile(path.join(senderDir, "icons", icon), path.join(outDir, "icons", icon));
+  // Images are served from the site itself: the CSP allows no other origins.
+  for (const dir of ["icons", "badges"]) {
+    await mkdir(path.join(outDir, dir), { recursive: true });
+    for (const file of await readdir(path.join(senderDir, dir))) {
+      await copyFile(path.join(senderDir, dir, file), path.join(outDir, dir, file));
+    }
   }
   await copyFile(path.join(repoRoot, "src/receiver/config.js"), path.join(outDir, "src/receiver/config.js"));
   await copyFile(path.join(repoRoot, "src/sender/sender.js"), path.join(outDir, "src/sender/sender.js"));

@@ -4,6 +4,10 @@ Tandem shows a computer, Android phone or Fire tablet screen on an Amazon Vega F
 
 Open the Tandem app on the Fire TV, then pick the TV at [tandemscreen.com](https://tandemscreen.com) in a desktop browser, or in the Android app. The first time a device shares, someone presses Allow on the TV.
 
+| Fire TV app | Fire tablet app |
+|---|---|
+| <a href="https://www.amazon.com/gp/product/B0HLJ42VYR/ref=mas_pm_tandem_screen"><img src="public/sender/badges/amazon-appstore-white.png" alt="Fire TV app: available at Amazon Appstore" height="60"></a> | <a href="https://www.amazon.com/gp/product/B0HLHRSWZM/ref=mas_pm_tandem_screen"><img src="public/sender/badges/amazon-appstore-black.png" alt="Fire tablet app: available at Amazon Appstore" height="60"></a> |
+
 ## How it works
 
 The devices stream to each other directly with WebRTC, so video and sound stay on the local network. A small AWS backend (API Gateway WebSocket, Lambda, DynamoDB) only introduces them: it lists the TVs on the sender's network and relays connection setup messages. The TV decides which devices may share. See [docs/architecture.md](docs/architecture.md).

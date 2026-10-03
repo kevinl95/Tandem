@@ -45,6 +45,19 @@ test("site build writes the endpoint config and a valid manifest with its icons"
   assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512" && icon.purpose === "maskable"));
 });
 
+test("site build hosts every image the page references, since the CSP blocks other origins", async (t) => {
+  const outDir = await tempDir(t);
+  await buildSite({ apkSource: null, contactEmail: CONTACT, outDir, signalingEndpoint: ENDPOINT });
+
+  const html = await readFile(path.join(outDir, "index.html"), "utf8");
+  const images = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map(([, src]) => src);
+  assert.ok(images.length >= 2);
+  for (const src of images) {
+    assert.doesNotMatch(src, /^https?:/, `${src} must be served from the site`);
+    await stat(path.join(outDir, src));
+  }
+});
+
 test("site build publishes the APK and links it when one is built", async (t) => {
   const outDir = await tempDir(t);
   const apkSource = path.join(await tempDir(t), "app-debug.apk");

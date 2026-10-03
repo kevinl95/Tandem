@@ -149,6 +149,29 @@
         color: #93c5fd;
       }
 
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px 32px;
+        margin-top: 12px;
+      }
+
+      .badges figure {
+        margin: 0;
+      }
+
+      .badges img {
+        display: block;
+        height: 60px;
+        width: auto;
+      }
+
+      .badges figcaption {
+        color: #9ca3af;
+        font-size: 14px;
+        margin-top: 6px;
+      }
+
       details {
         display: grid;
         gap: 12px;
@@ -227,9 +250,26 @@
         <dl id="stats"></dl>
       </details>
 
-      <p id="android-app" class="notice" hidden>
-        On an Android phone or Fire tablet? <a id="android-app-link" href="#">Download the Tandem Screen Share app</a> (Android 5.1 or newer; allow installs from unknown sources).
-      </p>
+      <section aria-labelledby="apps-heading">
+        <h2 id="apps-heading">Get the apps</h2>
+        <div class="badges">
+          <figure>
+            <a href="https://www.amazon.com/gp/product/B0HLJ42VYR/ref=mas_pm_tandem_screen">
+              <img src="badges/amazon-appstore-white.png" alt="Fire TV app: available at Amazon Appstore" height="60" />
+            </a>
+            <figcaption>Fire TV (required)</figcaption>
+          </figure>
+          <figure>
+            <a href="https://www.amazon.com/gp/product/B0HLHRSWZM/ref=mas_pm_tandem_screen">
+              <img src="badges/amazon-appstore-black.png" alt="Fire tablet app: available at Amazon Appstore" height="60" />
+            </a>
+            <figcaption>Fire tablets</figcaption>
+          </figure>
+        </div>
+        <p id="android-app" hidden>
+          Other Android phones and tablets: <a id="android-app-link" href="#">download the app</a> (Android 5.1 or newer; allow installs from unknown sources).
+        </p>
+      </section>
 
       <details id="settings">
         <summary>Settings</summary>
