@@ -44,3 +44,4 @@ Then open the printed site URL in a desktop browser on the same Wi-Fi as the TV,
 - [Deployment](docs/deployment.md): settings, custom domain, web app hosting
 - [Fire TV app](docs/vega.md): builds, releases, diagnostics
 - [Android app](docs/android.md): release signing, compatibility mode, audio
+- [Friction log](docs/friction-log.md): problems we hit with Vega, Android, AWS and the Appstore, and how we got around them
